@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from "react";
@@ -11,7 +12,7 @@ import { handleUserMessage } from '@/actions/handle-user-message'; // Action to 
 
 interface Message {
   id: string;
-  sender: "user" | "ai" | "system"; // Added 'system' sender type
+  sender: "user" | "ai" | "system" | "action"; // Added 'system' and 'action' sender types
   text: string;
   actions?: Array<{ label: string; trigger: string }>; // Optional actions (buttons)
 }
@@ -35,14 +36,19 @@ export function ChatInterface() {
     },
   ]);
   const [isLoading, setIsLoading] = React.useState(false);
-  const [showInput, setShowInput] = React.useState(false); // Initially hide input
+  const [showInput, setShowInput] = React.useState(false); // Initially hide input until a choice is made
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
   // Function to send a regular text message
   const sendMessage = async () => {
-    if (!input.trim()) return;
-    await processMessage(input, "user");
-    setInput(""); // Clear input after sending
+    const trimmedInput = input.trim();
+    if (!trimmedInput) return;
+
+    const userMessage: Message = { id: Date.now().toString(), sender: "user", text: trimmedInput };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput(""); // Clear input immediately
+
+    await processMessage(trimmedInput, "user");
   };
 
   // Function to handle button clicks (actions)
@@ -58,11 +64,11 @@ export function ChatInterface() {
         );
     }
 
-    // Get the label for the clicked button to display as user message
+    // Get the label for the clicked button to display as user message (optional, but good UX)
     const actionLabel = messages[actionMessageIndex]?.actions?.find(a => a.trigger === trigger)?.label || trigger;
 
-    // Add the user's choice as a message
-    const userChoiceMessage: Message = { id: Date.now().toString(), sender: "user", text: actionLabel };
+    // Add the user's choice as a message (use 'action' sender type for clarity in history)
+    const userChoiceMessage: Message = { id: Date.now().toString(), sender: "action", text: actionLabel };
     setMessages((prev) => [...prev, userChoiceMessage]);
 
     // Process the trigger associated with the button
@@ -74,25 +80,31 @@ export function ChatInterface() {
 
   // Central function to process messages (user input or action triggers)
   const processMessage = async (content: string, type: "user" | "action") => {
-     // Add user message only if it's actual user input, not an action trigger
-     if (type === 'user') {
-         const userMessage: Message = { id: Date.now().toString(), sender: "user", text: content };
-         setMessages((prev) => [...prev, userMessage]);
-     }
-     // Don't clear input here if it's a user message, clear it in sendMessage
-
+    // Note: User/Action message is added *before* calling this function
     setIsLoading(true);
 
     try {
       // Call the server action to handle the message/trigger
       // Use 'chat' channel for all interactions originating from the web UI
+      // No need to pass history here, the action handler manages it internally (server-side)
       const aiResponseText = await handleUserMessage(content, 'chat');
 
+      // Add the AI's response message
       const aiMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: aiResponseText };
       setMessages((prev) => [...prev, aiMessage]);
+
+      // Check if the response indicates the need for further input (e.g., onboarding question)
+      // If yes, ensure the input field is shown.
+      // Simple check: if the AI response doesn't contain "complete" or "error" keywords, assume it needs more input.
+      // This is a heuristic and might need refinement based on actual AI responses.
+      if (!aiResponseText.toLowerCase().includes("complete") && !aiResponseText.toLowerCase().includes("error") && !aiResponseText.toLowerCase().includes("sorry")) {
+        setShowInput(true);
+      }
+
+
     } catch (error) {
       console.error("Error processing message:", error);
-      const errorMessageText = `Sorry, I encountered an error. Please try again. Details: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      const errorMessageText = `Sorry, I encountered an error processing your request. Details: ${error instanceof Error ? error.message : 'Unknown error'}`;
       const errorMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: errorMessageText };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
@@ -136,14 +148,16 @@ export function ChatInterface() {
                       message.sender === "user" ? "justify-end" : "justify-start"
                     }`}
                   >
-                    {message.sender === "ai" && (
+                    {/* AI and System messages aligned left */}
+                    {(message.sender === "ai" || message.sender === "system") && (
                       <Avatar className="h-8 w-8">
                         <AvatarImage src="https://picsum.photos/32/32?grayscale" alt="AI Avatar" />
                         <AvatarFallback>AI</AvatarFallback>
                       </Avatar>
                     )}
-                     {/* System messages aligned left, no avatar */}
-                     {message.sender === "system" && <div className="w-8 h-8 shrink-0"></div> }
+                    {/* Add placeholder for action messages if needed, or style them like system messages */}
+                    {message.sender === "action" && <div className="w-8 h-8 shrink-0"></div> }
+
 
                     <div
                       className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${
@@ -151,7 +165,7 @@ export function ChatInterface() {
                           ? "bg-primary text-primary-foreground"
                            : message.sender === "ai"
                            ? "bg-secondary text-secondary-foreground"
-                           : "bg-muted text-muted-foreground" // Style for system messages
+                           : "bg-muted text-muted-foreground" // Style for system and action messages
                       }`}
                     >
                       {message.text}
@@ -165,7 +179,7 @@ export function ChatInterface() {
                   </div>
                    {/* Render action buttons below the message */}
                    {message.actions && (
-                     <div className="flex justify-start gap-2 mt-2 pl-11">
+                     <div className="flex justify-start gap-2 mt-2 pl-11"> {/* Adjusted padding */}
                        {message.actions.map((action) => (
                          <Button
                            key={action.trigger}
@@ -198,7 +212,7 @@ export function ChatInterface() {
             </div>
           </ScrollArea>
         </CardContent>
-         {/* Conditionally render the input area */}
+         {/* Conditionally render the input area - show if showInput is true */}
          {showInput && (
           <CardFooter className="p-4 border-t">
             <div className="flex w-full items-center space-x-2">
@@ -221,3 +235,5 @@ export function ChatInterface() {
     </div>
   );
 }
+
+    

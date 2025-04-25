@@ -1,52 +1,71 @@
+
 'use server';
 /**
  * @fileOverview Defines the Onboarding Interviewer Agent flow.
- * This agent simulates asking onboarding questions and generates the final structured data.
+ * This agent asks onboarding questions interactively based on conversation history.
  *
  * - conductOnboardingInterview - Function to invoke the onboarding interview flow.
- * - ConductOnboardingInterviewInput - Input type (currently empty).
- * - ConductOnboardingInterviewOutput - Output type containing structured onboarding data.
+ * - ConductOnboardingInterviewInput - Input type containing conversation history.
+ * - ConductOnboardingInterviewOutput - Output type containing the next question or final data.
  */
 
 import { ai } from '@/ai/ai-instance';
 import { z } from 'genkit';
 
-// Input schema (currently empty as it's just triggered)
-const ConductOnboardingInterviewInputSchema = z.object({});
+// Define the structure for a single message in the history
+const MessageSchema = z.object({
+  sender: z.enum(['user', 'ai', 'system', 'action']), // Include 'action' if button clicks are part of history
+  text: z.string(),
+});
+export type Message = z.infer<typeof MessageSchema>;
+
+// Input schema: Takes the conversation history
+const ConductOnboardingInterviewInputSchema = z.object({
+  conversationHistory: z.array(MessageSchema).describe('The history of the conversation so far.'),
+});
 export type ConductOnboardingInterviewInput = z.infer<typeof ConductOnboardingInterviewInputSchema>;
 
-// Output schema containing the structured onboarding data
-const ConductOnboardingInterviewOutputSchema = z.object({
-  onboardingData: z.object({
+// Output schema: Provides the next question or the final collected data
+const OnboardingDataSchema = z.object({
     name: z.string().describe("The user's name."),
     goal: z.string().describe("The user's goal for the 30-day trial."),
     channel: z.enum(['Chat', 'Email', 'Whatsapp']).describe("The user's preferred communication channel."),
-  }).describe('The collected onboarding information.'),
+}).describe('The collected onboarding information.');
+export type OnboardingData = z.infer<typeof OnboardingDataSchema>;
+
+const ConductOnboardingInterviewOutputSchema = z.object({
+  nextQuestion: z.string().optional().describe('The next question to ask the user.'),
+  isComplete: z.boolean().describe('Indicates if the interview is complete.'),
+  onboardingData: OnboardingDataSchema.optional().describe('The final collected data when the interview is complete.'),
 });
 export type ConductOnboardingInterviewOutput = z.infer<typeof ConductOnboardingInterviewOutputSchema>;
 
+// Define expected questions
+const QUESTIONS = {
+    name: "What is your name?",
+    goal: "What is your goal for the 30 day free trial?",
+    channel: "What is your preferred channel of communication (Chat, Email, or Whatsapp)?",
+};
+
 /**
- * Simulates the onboarding interview process in a single step.
- * Asks the required questions internally and generates example answers.
- * @param input - Currently an empty object.
- * @returns An object containing the simulated onboarding data.
+ * Conducts the onboarding interview interactively based on conversation history.
+ * @param input - Object containing the conversation history.
+ * @returns An object containing the next question or the final onboarding data.
  */
 export async function conductOnboardingInterview(input: ConductOnboardingInterviewInput): Promise<ConductOnboardingInterviewOutput> {
-  console.log("[conductOnboardingInterview] Invoked with input:", input);
+  console.log("[conductOnboardingInterview] Invoked with history:", JSON.stringify(input.conversationHistory, null, 2));
   try {
     const result = await conductOnboardingInterviewFlow(input);
     console.log("[conductOnboardingInterview] Flow completed successfully. Result:", result);
-    // Basic validation to ensure the structure is generally correct
-    if (!result || !result.onboardingData || typeof result.onboardingData.name !== 'string') {
-        throw new Error("Onboarding flow returned invalid data structure.");
-    }
     return result;
   } catch (error) {
     console.error("[conductOnboardingInterview] Error executing flow:", error);
-    if (error instanceof Error) {
-        throw new Error(`Onboarding Interview failed: ${error.message}`);
+    // Return a default error state if the flow fails
+    return {
+        nextQuestion: "Sorry, I encountered an issue during the interview. Let's try starting the onboarding again.",
+        isComplete: true, // Treat as complete to stop the interview loop on error
+        onboardingData: undefined,
     }
-    throw new Error("Onboarding Interview failed with an unknown error.");
   }
 }
 
@@ -54,19 +73,36 @@ export async function conductOnboardingInterview(input: ConductOnboardingIntervi
 const onboardingInterviewPrompt = ai.definePrompt({
   name: 'onboardingInterviewPrompt',
   input: {
-    schema: ConductOnboardingInterviewInputSchema, // Takes empty input for now
+    schema: ConductOnboardingInterviewInputSchema, // Takes conversation history
   },
   output: {
-    schema: ConductOnboardingInterviewOutputSchema, // Expects the structured output
+    schema: ConductOnboardingInterviewOutputSchema, // Expects the structured output (next question or final data)
   },
-  prompt: `You are an Onboarding Interviewer AI. Your task is to simulate asking a new user the following three questions and generate example answers for them:
-1. What is your name?
-2. What is your goal for the 30 day free trial?
-3. What is your preferred channel of communication (Chat, Email, or Whatsapp)?
+  prompt: `You are an Onboarding Interviewer AI. Your task is to conduct a simple onboarding interview based on the provided conversation history. Ask the questions one by one.
 
-Generate plausible, example answers for these questions. For the channel, choose one of 'Chat', 'Email', or 'Whatsapp'.
+Conversation History:
+{{#each conversationHistory}}
+{{sender}}: {{text}}
+{{/each}}
 
-Return the collected information ONLY as a valid JSON object conforming to the output schema, nested under the 'onboardingData' key. Do not include any other text, explanation, or conversational elements in your response.`,
+Analyze the history to determine which questions have been answered:
+1. Name: "${QUESTIONS.name}"
+2. Goal: "${QUESTIONS.goal}"
+3. Channel: "${QUESTIONS.channel}" (Must be one of Chat, Email, or Whatsapp)
+
+If the user has not yet answered the 'name' question, ask: "${QUESTIONS.name}". Set 'isComplete' to false.
+If the user has answered 'name' but not 'goal', ask: "${QUESTIONS.goal}". Set 'isComplete' to false.
+If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channel}". Set 'isComplete' to false.
+
+If the user has answered all three questions:
+- Extract the name, goal, and channel (ensure channel is exactly 'Chat', 'Email', or 'Whatsapp').
+- Set 'isComplete' to true.
+- Set 'nextQuestion' to null or omit it.
+- Populate the 'onboardingData' object with the extracted values.
+- Do not ask any more questions.
+
+Return ONLY a valid JSON object conforming to the output schema. Do not include any other text, explanation, or conversational elements.
+`,
 });
 
 // Define the Genkit flow for the Onboarding Interviewer Agent
@@ -80,21 +116,40 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
     outputSchema: ConductOnboardingInterviewOutputSchema,
   },
   async (input) => {
-    console.log("[conductOnboardingInterviewFlow] Flow invoked with:", input);
+    console.log("[conductOnboardingInterviewFlow] Flow invoked with history:", JSON.stringify(input.conversationHistory, null, 2));
     try {
         console.log("[conductOnboardingInterviewFlow] Calling onboardingInterviewPrompt...");
         const { output } = await onboardingInterviewPrompt(input);
-        console.log("[conductOnboardingInterviewFlow] Prompt returned output:", output);
+        console.log("[conductOnboardingInterviewFlow] Prompt returned output:", JSON.stringify(output, null, 2));
 
         if (!output) {
             console.error("[conductOnboardingInterviewFlow] Error: Prompt did not return an output.");
             throw new Error("Onboarding Interview prompt did not return an output.");
         }
-         // Add validation for the nested structure
-         if (!output.onboardingData || typeof output.onboardingData.name !== 'string' || typeof output.onboardingData.goal !== 'string' || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel) ) {
-             console.error("[conductOnboardingInterviewFlow] Error: Prompt output is missing required fields or has incorrect types. Output:", output);
-            throw new Error("Onboarding Interview prompt returned invalid output structure.");
+
+        // Validate output structure based on completion status
+        if (output.isComplete) {
+          if (!output.onboardingData || typeof output.onboardingData.name !== 'string' || typeof output.onboardingData.goal !== 'string' || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
+            console.error("[conductOnboardingInterviewFlow] Error: Interview marked complete but onboardingData is invalid or missing. Output:", output);
+            throw new Error("Interview marked complete but onboardingData is invalid or missing.");
+          }
+          if (output.nextQuestion) {
+             console.warn("[conductOnboardingInterviewFlow] Warning: Interview complete but nextQuestion is present. Output:", output);
+             // Optionally clear nextQuestion if it shouldn't be there
+             // output.nextQuestion = undefined;
+          }
+        } else {
+          if (!output.nextQuestion || typeof output.nextQuestion !== 'string') {
+            console.error("[conductOnboardingInterviewFlow] Error: Interview not complete but nextQuestion is invalid or missing. Output:", output);
+            throw new Error("Interview not complete but nextQuestion is invalid or missing.");
+          }
+          if (output.onboardingData) {
+              console.warn("[conductOnboardingInterviewFlow] Warning: Interview not complete but onboardingData is present. Output:", output);
+              // Optionally clear onboardingData if it shouldn't be there
+              // output.onboardingData = undefined;
+          }
         }
+
         console.log("[conductOnboardingInterviewFlow] Flow successful. Returning output:", output);
         return output;
     } catch (error) {
@@ -106,3 +161,5 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
     }
   }
 );
+
+    
