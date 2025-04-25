@@ -1,15 +1,11 @@
 import type { Metadata } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Outfit } from 'next/font/google'; // Import Outfit font
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster'; // Import Toaster
 
-const geistSans = Geist({
-  variable: '--font-geist-sans',
-  subsets: ['latin'],
-});
-
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
+// Instantiate Outfit font
+const outfit = Outfit({
+  variable: '--font-outfit', // Define CSS variable
   subsets: ['latin'],
 });
 
@@ -25,7 +21,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning={true}>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      {/* Apply Outfit font variable to body */}
+      <body className={`${outfit.variable} font-sans antialiased`}> {/* Use font-sans which will default to --font-outfit */}
         {children}
         <Toaster />
       </body>

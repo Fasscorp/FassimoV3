@@ -159,7 +159,7 @@ export function ChatInterface() {
 
 
   return (
-    <div className="flex flex-col justify-center items-center min-h-screen bg-background p-4">
+    <div className="flex flex-col justify-center items-center min-h-screen bg-background p-4 font-sans"> {/* Apply font-sans */}
       {/* Skillplate Logo */}
       <div className="mb-4">
         <Image
@@ -168,6 +168,7 @@ export function ChatInterface() {
             width={150} // Adjust width as needed
             height={50} // Adjust height as needed
             priority // Load logo faster
+            className="brightness-0 invert" // Apply filter to make logo white
         />
       </div>
       {/* Chat Card */}
