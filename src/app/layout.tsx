@@ -20,6 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // Remove extra whitespace node to fix hydration error
     <html lang="en" className="dark" suppressHydrationWarning={true}>
       {/* Apply Outfit font variable to body */}
       <body className={`${outfit.variable} font-sans antialiased`}> {/* Use font-sans which will default to --font-outfit */}
