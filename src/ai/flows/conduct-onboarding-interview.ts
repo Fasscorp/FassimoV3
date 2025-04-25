@@ -57,7 +57,7 @@ export async function conductOnboardingInterview(input: ConductOnboardingIntervi
   console.log("[conductOnboardingInterview] Invoked with history:", JSON.stringify(input.conversationHistory, null, 2));
   try {
     const result = await conductOnboardingInterviewFlow(input);
-    console.log("[conductOnboardingInterview] Flow completed successfully. Result:", result);
+    console.log("[conductOnboardingInterview] Flow completed successfully. Result:", JSON.stringify(result, null, 2)); // Log result clearly
     return result;
   } catch (error) {
     console.error("[conductOnboardingInterview] Error executing flow:", error);
@@ -91,18 +91,20 @@ Analyze the history to determine which questions have been answered:
 2. Goal: "${QUESTIONS.goal}"
 3. Channel: "${QUESTIONS.channel}" (Must be one of Chat, Email, or Whatsapp)
 
-If the user has not yet answered the 'name' question, ask: "${QUESTIONS.name}". Set 'isComplete' to false.
-If the user has answered 'name' but not 'goal', ask: "${QUESTIONS.goal}". Set 'isComplete' to false.
-If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channelWithOptions}". Set 'isComplete' to false. VERY IMPORTANT: Include the "[OPTIONS: Chat, Email, Whatsapp]" marker exactly as written in the question.
+Based on the conversation history, determine the *very next* question to ask.
 
-If the user has answered all three questions:
+If the user has not yet answered the 'name' question, ask: "${QUESTIONS.name}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it.
+If the user has answered 'name' but not 'goal', ask: "${QUESTIONS.goal}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it.
+If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channelWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. VERY IMPORTANT: Include the "[OPTIONS: Chat, Email, Whatsapp]" marker exactly as written in the question.
+
+If the user has answered all three questions (based on their most recent relevant message for each topic):
 - Extract the name, goal, and channel (ensure channel is exactly 'Chat', 'Email', or 'Whatsapp' based on their response to the channel question).
 - Set 'isComplete' to true.
 - Set 'nextQuestion' to null or omit it.
 - Populate the 'onboardingData' object with the extracted values.
 - Do not ask any more questions.
 
-Return ONLY a valid JSON object conforming to the output schema. Do not include any other text, explanation, or conversational elements.
+Return ONLY a valid JSON object conforming to the output schema. Do not include any other text, explanation, or conversational elements outside the JSON structure.
 `,
 });
 
@@ -121,7 +123,7 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
     try {
         console.log("[conductOnboardingInterviewFlow] Calling onboardingInterviewPrompt...");
         const { output } = await onboardingInterviewPrompt(input);
-        console.log("[conductOnboardingInterviewFlow] Prompt returned output:", JSON.stringify(output, null, 2));
+        console.log("[conductOnboardingInterviewFlow] Prompt returned output:", JSON.stringify(output, null, 2)); // Log raw output
 
         if (!output) {
             console.error("[conductOnboardingInterviewFlow] Error: Prompt did not return an output.");
@@ -130,11 +132,12 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
 
         // Validate output structure based on completion status
         if (output.isComplete) {
+          console.log("[conductOnboardingInterviewFlow] Output indicates interview is complete. Validating data...");
           if (!output.onboardingData || typeof output.onboardingData.name !== 'string' || typeof output.onboardingData.goal !== 'string' || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
             console.error("[conductOnboardingInterviewFlow] Error: Interview marked complete but onboardingData is invalid or missing. Output:", output);
             // Attempt to recover if possible, otherwise throw
-             if (output.onboardingData && !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
-                 console.warn("[conductOnboardingInterviewFlow] Warning: Invalid channel detected in completed data. Attempting to fix or request again might be needed.");
+             if (output.onboardingData && typeof output.onboardingData.channel === 'string' && !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
+                 console.warn("[conductOnboardingInterviewFlow] Warning: Invalid channel detected in completed data. Value:", output.onboardingData.channel);
                  // For now, throw error, but could add logic to re-ask the channel question
              }
             throw new Error("Interview marked complete but onboardingData is invalid or missing.");
@@ -144,7 +147,9 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
              // Clear nextQuestion if it shouldn't be there
              output.nextQuestion = undefined;
           }
+           console.log("[conductOnboardingInterviewFlow] Completed data validated successfully.");
         } else {
+           console.log("[conductOnboardingInterviewFlow] Output indicates interview is NOT complete. Validating next question...");
           if (!output.nextQuestion || typeof output.nextQuestion !== 'string') {
             console.error("[conductOnboardingInterviewFlow] Error: Interview not complete but nextQuestion is invalid or missing. Output:", output);
             throw new Error("Interview not complete but nextQuestion is invalid or missing.");
@@ -154,12 +159,13 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
               // Clear onboardingData if it shouldn't be there
               output.onboardingData = undefined;
           }
+           console.log("[conductOnboardingInterviewFlow] Next question validated successfully:", output.nextQuestion);
         }
 
-        console.log("[conductOnboardingInterviewFlow] Flow successful. Returning output:", output);
+        console.log("[conductOnboardingInterviewFlow] Flow logic successful. Returning validated output:", JSON.stringify(output, null, 2));
         return output;
     } catch (error) {
-        console.error("[conductOnboardingInterviewFlow] Error during prompt execution:", error);
+        console.error("[conductOnboardingInterviewFlow] Error during prompt execution or validation:", error);
         if (error instanceof Error) {
              throw new Error(`Error in conductOnboardingInterviewFlow calling prompt: ${error.message}`);
         }
@@ -167,3 +173,6 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
     }
   }
 );
+
+
+    

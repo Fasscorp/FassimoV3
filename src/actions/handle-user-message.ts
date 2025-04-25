@@ -54,7 +54,7 @@ function addMessageToHistory(sender: OnboardingMessage['sender'], text: string) 
     if (text === RESET_CONVERSATION_TRIGGER) return;
     const newMessage: OnboardingMessage = { sender, text };
     conversationState.history.push(newMessage);
-    console.log("[addMessageToHistory] Updated history:", conversationState.history);
+    console.log("[addMessageToHistory] Updated history:", JSON.stringify(conversationState.history, null, 2)); // Log history clearly
 }
 
 // Interface for the response sent back to the UI
@@ -74,7 +74,7 @@ interface HandleUserMessageResponse {
  */
 export async function handleUserMessage(message: string, channel: 'email' | 'whatsapp' | 'voice' | 'chat'): Promise<HandleUserMessageResponse> {
   console.log(`[handleUserMessage] Handling message from ${channel}: "${message}"`);
-  console.log("[handleUserMessage] Current state before processing:", conversationState);
+  console.log("[handleUserMessage] Current state BEFORE processing:", JSON.stringify(conversationState, null, 2)); // Log state clearly
 
   // --- Reset Flow ---
   if (message === RESET_CONVERSATION_TRIGGER) {
@@ -91,105 +91,125 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
     (message === ONBOARDING_TRIGGER || message === CREATE_PRODUCT_TRIGGER) ? 'action' : 'user';
 
 
-  // Add user message/action to history *unless* it's the initial trigger for a flow
-  // (The trigger itself doesn't need to be in the history passed to the flow)
-  if (message !== ONBOARDING_TRIGGER && message !== CREATE_PRODUCT_TRIGGER) {
+  // Add user message/action to history *unless* it's the initial trigger for a flow *and* no flow is active
+  // (The initial trigger itself doesn't need to be in the history passed to the flow if it's just starting)
+  // Add replies within an active flow to the history.
+  let shouldAddToHistory = true;
+  if (message === ONBOARDING_TRIGGER && conversationState.currentFlow !== 'onboarding') {
+     shouldAddToHistory = false; // Don't add the START trigger if we are just starting the flow
+  }
+   if (message === CREATE_PRODUCT_TRIGGER && conversationState.currentFlow !== 'create_product') {
+     shouldAddToHistory = false; // Don't add the START trigger if we are just starting the flow
+   }
+
+  // Add user message to history if it's not the initial trigger or if a flow is already active
+  if (shouldAddToHistory) {
      addMessageToHistory(senderType, message);
   }
 
 
   try {
-    // --- Onboarding Flow ---
-    if (message === ONBOARDING_TRIGGER || conversationState.currentFlow === 'onboarding') {
-      // Start or continue onboarding
-      if (message === ONBOARDING_TRIGGER) {
-        console.log("[handleUserMessage] Triggering onboarding interview...");
-        conversationState.currentFlow = 'onboarding';
-        // Ensure history is clean for a new onboarding session triggered explicitly
-        // Note: history might contain the 'START_ONBOARDING_INTERVIEW' action message if added above,
-        // which is fine for the LLM context. Resetting here would remove that context.
-        // conversationState.history = []; // Reconsider if a full reset is needed here
-      } else {
-          console.log("[handleUserMessage] Continuing onboarding interview...");
-      }
+    // --- Determine Flow ---
+    // Prioritize active flow state over the incoming message trigger if a flow is already running.
+    let activeFlow = conversationState.currentFlow;
 
+    // If no flow is active, check if the message triggers a new flow.
+    if (!activeFlow) {
+        if (message === ONBOARDING_TRIGGER) {
+            console.log("[handleUserMessage] Triggering NEW onboarding interview...");
+            activeFlow = 'onboarding';
+            conversationState.currentFlow = 'onboarding';
+            // Clear history only if explicitly starting a new onboarding session
+            // conversationState.history = []; // Removed this to allow context carryover if needed, relies on prompt logic
+        } else if (message === CREATE_PRODUCT_TRIGGER) {
+            console.log("[handleUserMessage] Triggering NEW create product flow...");
+            activeFlow = 'create_product';
+            conversationState.currentFlow = 'create_product';
+            // conversationState.history = []; // Consider if history reset needed
+        }
+    }
 
-      // Call the onboarding flow with the current history
-      const onboardingResult = await conductOnboardingInterview({ conversationHistory: conversationState.history });
-      console.log("[handleUserMessage] Onboarding flow returned:", onboardingResult);
+    console.log(`[handleUserMessage] Determined activeFlow = ${activeFlow}`);
 
-      // Add AI response (question or completion message) to history
-      if (onboardingResult.nextQuestion) {
-          // Don't add the [OPTIONS] marker to history
-          const questionText = onboardingResult.nextQuestion.replace(/ \[OPTIONS:.*?\]$/, '');
-          addMessageToHistory('ai', questionText);
-      }
+    // --- Execute Flow ---
+    switch (activeFlow) {
+      case 'onboarding':
+        console.log("[handleUserMessage] Entering ONBOARDING flow block.");
+        // Call the onboarding flow with the current history
+        const onboardingResult = await conductOnboardingInterview({ conversationHistory: conversationState.history });
+        console.log("[handleUserMessage] Onboarding flow returned:", JSON.stringify(onboardingResult, null, 2)); // Log result clearly
 
-      // Check if the interview is complete
-      if (onboardingResult.isComplete) {
-        conversationState.currentFlow = null; // Reset flow state
+        // Add AI response (question or completion message) to history
+        if (onboardingResult.nextQuestion) {
+            // Don't add the [OPTIONS] marker to history
+            const questionText = onboardingResult.nextQuestion.replace(/ \[OPTIONS:.*?\]$/, '');
+            addMessageToHistory('ai', questionText);
+        }
 
-        if (onboardingResult.onboardingData) {
-          try {
-            // Validate the structure (optional but recommended)
-            OnboardingDataSchema.parse(onboardingResult.onboardingData);
-            const jsonResponse = JSON.stringify(onboardingResult.onboardingData, null, 2);
-            const finalMessage = `Onboarding complete! Here's the collected information:\n\`\`\`json\n${jsonResponse}\n\`\`\``;
-            addMessageToHistory('ai', finalMessage); // Add final summary to history
-            console.log("[handleUserMessage] Returning formatted onboarding data:", finalMessage);
-            return { responseText: finalMessage };
-          } catch (validationError) {
-            console.error("[handleUserMessage] Error validating onboarding result schema:", validationError);
-            const errorMsg = "Sorry, there was an issue processing the final onboarding information format.";
-             addMessageToHistory('ai', errorMsg);
-            return { responseText: errorMsg };
+        // Check if the interview is complete
+        if (onboardingResult.isComplete) {
+          conversationState.currentFlow = null; // Reset flow state
+          console.log("[handleUserMessage] Onboarding marked as COMPLETE. Resetting flow state.");
+
+          if (onboardingResult.onboardingData) {
+            try {
+              // Validate the structure (optional but recommended)
+              OnboardingDataSchema.parse(onboardingResult.onboardingData);
+              const jsonResponse = JSON.stringify(onboardingResult.onboardingData, null, 2);
+              const finalMessage = `Onboarding complete! Here's the collected information:\n\`\`\`json\n${jsonResponse}\n\`\`\``;
+              addMessageToHistory('ai', finalMessage); // Add final summary to history
+              console.log("[handleUserMessage] Returning formatted onboarding data:", finalMessage);
+              return { responseText: finalMessage };
+            } catch (validationError) {
+              console.error("[handleUserMessage] Error validating onboarding result schema:", validationError);
+              const errorMsg = "Sorry, there was an issue processing the final onboarding information format.";
+               addMessageToHistory('ai', errorMsg);
+              return { responseText: errorMsg };
+            }
+          } else {
+              // Should ideally not happen if isComplete is true based on the flow logic
+              console.error("[handleUserMessage] Onboarding complete but no data returned.");
+               const errorMsg = "Onboarding seems complete, but I couldn't retrieve the final data.";
+               addMessageToHistory('ai', errorMsg);
+               return { responseText: errorMsg };
           }
+        } else if (onboardingResult.nextQuestion) {
+          console.log("[handleUserMessage] Onboarding asking next question.");
+          // Check for the [OPTIONS] marker to generate buttons
+          const optionsMatch = onboardingResult.nextQuestion.match(/ \[OPTIONS: (.*?)\]$/);
+          let actions: Array<{ label: string; trigger: string }> | undefined = undefined;
+          let questionText = onboardingResult.nextQuestion;
+
+          if (optionsMatch) {
+            const options = optionsMatch[1].split(',').map(opt => opt.trim());
+            actions = options.map(opt => ({ label: opt, trigger: opt })); // Use option text as trigger
+            questionText = onboardingResult.nextQuestion.replace(/ \[OPTIONS:.*?\]$/, ''); // Remove marker from text shown to user
+            console.log(`[handleUserMessage] Found options: ${options.join(', ')}. Generating actions.`);
+          }
+
+          // Ask the next question, potentially with actions (buttons)
+          console.log("[handleUserMessage] Asking next onboarding question:", questionText);
+          return { responseText: questionText, actions: actions };
+
         } else {
-            // Should ideally not happen if isComplete is true based on the flow logic
-            console.error("[handleUserMessage] Onboarding complete but no data returned.");
-             const errorMsg = "Onboarding seems complete, but I couldn't retrieve the final data.";
-             addMessageToHistory('ai', errorMsg);
-             return { responseText: errorMsg };
-        }
-      } else if (onboardingResult.nextQuestion) {
-        // Check for the [OPTIONS] marker to generate buttons
-        const optionsMatch = onboardingResult.nextQuestion.match(/ \[OPTIONS: (.*?)\]$/);
-        let actions: Array<{ label: string; trigger: string }> | undefined = undefined;
-        let questionText = onboardingResult.nextQuestion;
-
-        if (optionsMatch) {
-          const options = optionsMatch[1].split(',').map(opt => opt.trim());
-          actions = options.map(opt => ({ label: opt, trigger: opt })); // Use option text as trigger
-          questionText = onboardingResult.nextQuestion.replace(/ \[OPTIONS:.*?\]$/, ''); // Remove marker from text shown to user
-          console.log(`[handleUserMessage] Found options: ${options.join(', ')}. Generating actions.`);
+           // Handle unexpected case where interview is not complete but no question is provided
+           console.error("[handleUserMessage] Onboarding flow error: Not complete, but no next question.");
+           const errorMsg = "Sorry, I got stuck during the onboarding process. Could you try starting again?";
+           addMessageToHistory('ai', errorMsg);
+           conversationState.currentFlow = null; // Reset flow
+           return { responseText: errorMsg };
         }
 
-        // Ask the next question, potentially with actions (buttons)
-        console.log("[handleUserMessage] Asking next onboarding question:", questionText);
-        return { responseText: questionText, actions: actions };
-
-      } else {
-         // Handle unexpected case where interview is not complete but no question is provided
-         console.error("[handleUserMessage] Onboarding flow error: Not complete, but no next question.");
-         const errorMsg = "Sorry, I got stuck during the onboarding process. Could you try starting again?";
-         addMessageToHistory('ai', errorMsg);
-         conversationState.currentFlow = null; // Reset flow
-         return { responseText: errorMsg };
-      }
-
-    // --- Placeholder for Create Product Flow ---
-    } else if (message === CREATE_PRODUCT_TRIGGER) {
-        console.log("[handleUserMessage] Placeholder for Create Product flow.");
-         conversationState.currentFlow = 'create_product'; // Set state if needed later
+      case 'create_product':
+         console.log("[handleUserMessage] Placeholder for Create Product flow.");
          const response = "The 'Create Product' feature is not implemented yet.";
          addMessageToHistory('ai', response);
          conversationState.currentFlow = null; // Reset immediately for this placeholder
          return { responseText: response };
 
-    // --- Default/Praise Agent Flow ---
-    } else {
-        // If no specific flow is active, default to parsing and potentially praise
-        console.log("[handleUserMessage] No active flow, proceeding with default handling.");
+      default:
+        // --- Default/Praise Agent Flow (when no specific flow is active) ---
+        console.log("[handleUserMessage] No active flow, proceeding with default handling (parse/triage/praise test).");
         // Keep track that we're in a general interaction, could be praise or something else
         // conversationState.currentFlow = 'praise'; // Setting this might be too specific if it's not always praise
 
@@ -247,7 +267,7 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
     conversationState.currentFlow = null; // Reset flow state on error
     return { responseText: finalErrorMsg };
   } finally {
-       console.log("[handleUserMessage] Final state after processing:", conversationState);
+       console.log("[handleUserMessage] Final state AFTER processing:", JSON.stringify(conversationState, null, 2)); // Log final state
   }
 }
 
@@ -255,3 +275,5 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
 // TODO: Implement actual sub-agent execution logic based on triage/intent when not testing praise agent.
 // TODO: Integrate ModelContextProtocol SDK for tool usage within sub-agents.
 // TODO: Implement actual channel integrations (Email, WhatsApp, Voice) - these would likely trigger this action.
+
+    
