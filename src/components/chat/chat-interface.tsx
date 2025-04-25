@@ -6,43 +6,100 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send } from "lucide-react";
+import { Send, Plus, Clipboard } from "lucide-react"; // Added Plus and Clipboard icons
 import { handleUserMessage } from '@/actions/handle-user-message'; // Action to handle user message
 
 interface Message {
   id: string;
-  sender: "user" | "ai";
+  sender: "user" | "ai" | "system"; // Added 'system' sender type
   text: string;
+  actions?: Array<{ label: string; trigger: string }>; // Optional actions (buttons)
 }
+
+// Define the specific trigger message for onboarding
+const ONBOARDING_TRIGGER = 'START_ONBOARDING_INTERVIEW';
+const CREATE_PRODUCT_TRIGGER = 'START_CREATE_PRODUCT'; // Placeholder for future feature
 
 export function ChatInterface() {
   const [input, setInput] = React.useState("");
-  const [messages, setMessages] = React.useState<Message[]>([]);
+  const [messages, setMessages] = React.useState<Message[]>([
+    // Initial system message with options
+    {
+      id: "initial-greeting",
+      sender: "system",
+      text: "Hello! What would you like to work on today?",
+      actions: [
+        { label: "Onboarding", trigger: ONBOARDING_TRIGGER },
+        { label: "Create Product", trigger: CREATE_PRODUCT_TRIGGER },
+      ],
+    },
+  ]);
   const [isLoading, setIsLoading] = React.useState(false);
+  const [showInput, setShowInput] = React.useState(false); // Initially hide input
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
+  // Function to send a regular text message
   const sendMessage = async () => {
     if (!input.trim()) return;
+    await processMessage(input, "user");
+    setInput(""); // Clear input after sending
+  };
 
-    const userMessage: Message = { id: Date.now().toString(), sender: "user", text: input };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
+  // Function to handle button clicks (actions)
+  const handleActionClick = async (trigger: string) => {
+    // Find the message with the action to remove buttons after click
+    const actionMessageIndex = messages.findIndex(msg => msg.actions?.some(a => a.trigger === trigger));
+
+    if (actionMessageIndex !== -1) {
+        setMessages(prevMessages =>
+            prevMessages.map((msg, index) =>
+                index === actionMessageIndex ? { ...msg, actions: undefined } : msg
+            )
+        );
+    }
+
+    // Get the label for the clicked button to display as user message
+    const actionLabel = messages[actionMessageIndex]?.actions?.find(a => a.trigger === trigger)?.label || trigger;
+
+    // Add the user's choice as a message
+    const userChoiceMessage: Message = { id: Date.now().toString(), sender: "user", text: actionLabel };
+    setMessages((prev) => [...prev, userChoiceMessage]);
+
+    // Process the trigger associated with the button
+    await processMessage(trigger, "action"); // Pass trigger and 'action' type
+
+    // Show the input field after the initial choice is made
+    setShowInput(true);
+  };
+
+  // Central function to process messages (user input or action triggers)
+  const processMessage = async (content: string, type: "user" | "action") => {
+     // Add user message only if it's actual user input, not an action trigger
+     if (type === 'user') {
+         const userMessage: Message = { id: Date.now().toString(), sender: "user", text: content };
+         setMessages((prev) => [...prev, userMessage]);
+     }
+     // Don't clear input here if it's a user message, clear it in sendMessage
+
     setIsLoading(true);
 
     try {
-      // Call the server action to handle the user message
-      const aiResponseText = await handleUserMessage(input, 'chat'); // Pass channel 'chat'
+      // Call the server action to handle the message/trigger
+      // Use 'chat' channel for all interactions originating from the web UI
+      const aiResponseText = await handleUserMessage(content, 'chat');
 
       const aiMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: aiResponseText };
       setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
       console.error("Error processing message:", error);
-      const errorMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: `Sorry, I encountered an error. Please try again. Details: ${error instanceof Error ? error.message : 'Unknown error'}` };
+      const errorMessageText = `Sorry, I encountered an error. Please try again. Details: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      const errorMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: errorMessageText };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
+
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -54,12 +111,14 @@ export function ChatInterface() {
   React.useEffect(() => {
     // Scroll to bottom when messages change
     if (scrollAreaRef.current) {
-      const scrollElement = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
-      }
+        // Use querySelector to find the viewport element
+        const viewport = scrollAreaRef.current.querySelector('div[style*="overflow: hidden scroll;"]');
+        if (viewport) {
+            viewport.scrollTop = viewport.scrollHeight;
+        }
     }
   }, [messages]);
+
 
   return (
     <div className="flex justify-center items-center min-h-screen bg-background p-4">
@@ -71,41 +130,66 @@ export function ChatInterface() {
           <ScrollArea className="h-[500px] p-4" ref={scrollAreaRef}>
             <div className="space-y-4">
               {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex items-start gap-3 ${
-                    message.sender === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  {message.sender === "ai" && (
-                    <Avatar className="h-8 w-8">
-                       <AvatarImage src="https://picsum.photos/32/32?grayscale" alt="AI Avatar" />
-                      <AvatarFallback>AI</AvatarFallback>
-                    </Avatar>
-                  )}
+                <div key={message.id}>
                   <div
-                    className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${
-                      message.sender === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-secondary text-secondary-foreground"
+                    className={`flex items-start gap-3 ${
+                      message.sender === "user" ? "justify-end" : "justify-start"
                     }`}
                   >
-                    {message.text}
+                    {message.sender === "ai" && (
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src="https://picsum.photos/32/32?grayscale" alt="AI Avatar" />
+                        <AvatarFallback>AI</AvatarFallback>
+                      </Avatar>
+                    )}
+                     {/* System messages aligned left, no avatar */}
+                     {message.sender === "system" && <div className="w-8 h-8 shrink-0"></div> }
+
+                    <div
+                      className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${
+                        message.sender === "user"
+                          ? "bg-primary text-primary-foreground"
+                           : message.sender === "ai"
+                           ? "bg-secondary text-secondary-foreground"
+                           : "bg-muted text-muted-foreground" // Style for system messages
+                      }`}
+                    >
+                      {message.text}
+                    </div>
+                    {message.sender === "user" && (
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src="https://picsum.photos/32/32" alt="User Avatar" />
+                        <AvatarFallback>U</AvatarFallback>
+                      </Avatar>
+                    )}
                   </div>
-                   {message.sender === "user" && (
-                     <Avatar className="h-8 w-8">
-                       <AvatarImage src="https://picsum.photos/32/32" alt="User Avatar" />
-                       <AvatarFallback>U</AvatarFallback>
-                    </Avatar>
-                  )}
+                   {/* Render action buttons below the message */}
+                   {message.actions && (
+                     <div className="flex justify-start gap-2 mt-2 pl-11">
+                       {message.actions.map((action) => (
+                         <Button
+                           key={action.trigger}
+                           variant="outline"
+                           size="sm"
+                           onClick={() => handleActionClick(action.trigger)}
+                           disabled={isLoading}
+                         >
+                            {/* Add icons based on action label - extend as needed */}
+                            {action.label === "Onboarding" && <Clipboard className="mr-2 h-4 w-4" />}
+                            {action.label === "Create Product" && <Plus className="mr-2 h-4 w-4" />}
+                            {action.label}
+                         </Button>
+                       ))}
+                     </div>
+                   )}
                 </div>
               ))}
               {isLoading && (
                 <div className="flex items-start gap-3 justify-start">
-                   <Avatar className="h-8 w-8">
-                      <AvatarImage src="https://picsum.photos/32/32?grayscale" alt="AI Avatar" />
-                      <AvatarFallback>AI</AvatarFallback>
-                   </Avatar>
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src="https://picsum.photos/32/32?grayscale" alt="AI Avatar" />
+                    <AvatarFallback>AI</AvatarFallback>
+                  </Avatar>
                   <div className="rounded-lg p-3 bg-secondary text-secondary-foreground animate-pulse">
                     Thinking...
                   </div>
@@ -114,22 +198,25 @@ export function ChatInterface() {
             </div>
           </ScrollArea>
         </CardContent>
-        <CardFooter className="p-4 border-t">
-          <div className="flex w-full items-center space-x-2">
-            <Textarea
-              placeholder="Type your message here..."
-              className="flex-1 resize-none min-h-[40px] max-h-[150px]"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={isLoading}
-              aria-label="Chat input"
-            />
-            <Button type="submit" size="icon" onClick={sendMessage} disabled={isLoading || !input.trim()} aria-label="Send message">
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardFooter>
+         {/* Conditionally render the input area */}
+         {showInput && (
+          <CardFooter className="p-4 border-t">
+            <div className="flex w-full items-center space-x-2">
+              <Textarea
+                placeholder="Type your message here..."
+                className="flex-1 resize-none min-h-[40px] max-h-[150px]"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isLoading}
+                aria-label="Chat input"
+              />
+              <Button type="submit" size="icon" onClick={sendMessage} disabled={isLoading || !input.trim()} aria-label="Send message">
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardFooter>
+         )}
       </Card>
     </div>
   );
