@@ -174,7 +174,8 @@ export function ChatInterface() {
       {/* Chat Card */}
       <Card className="w-full max-w-2xl shadow-lg rounded-lg">
         <CardHeader className="border-b flex flex-row justify-between items-center">
-          <CardTitle className="text-lg font-semibold text-foreground">FASSIMO AI Assistant V3</CardTitle> {/* Updated Title */}
+           {/* Apply custom styling to the CardTitle */}
+           <CardTitle className="text-[40px] font-bold tracking-tighter leading-[1.1] text-foreground">FASSIMO AI Assistant V3</CardTitle>
           <Button variant="destructive" size="icon" onClick={resetChat} disabled={isLoading} aria-label="Reset chat">
             <RefreshCw className="h-5 w-5" />
           </Button>
@@ -290,3 +291,4 @@ export function ChatInterface() {
     </div>
   );
 }
+

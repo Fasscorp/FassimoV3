@@ -13,6 +13,16 @@ export default {
         fontFamily: {
             sans: ["var(--font-outfit)", ...fontFamily.sans], // Add Outfit to sans-serif stack
         },
+        fontSize: {
+            '40px': '40px', // Add custom font size
+        },
+        letterSpacing: {
+            tighter: '-0.05em', // Default tighter
+            '-2px': '-2px', // Add custom letter spacing
+        },
+         lineHeight: {
+             '1.1': '1.1', // Add custom line height
+         },
         colors: {
           background: 'hsl(var(--background))',
           foreground: 'hsl(var(--foreground))',
@@ -96,3 +106,4 @@ export default {
     },
   plugins: [require("tailwindcss-animate")],
 } satisfies Config;
+
