@@ -70,29 +70,28 @@ const getTasksFlow = ai.defineFlow<
     // ----------------------------------------
 
     // Mocking database interaction:
-    // Returning the tasks currently stored in the in-memory conversationState
-    // WARNING: This uses the IN-MEMORY state from handle-user-message.ts, which is NOT
-    // suitable for production. This is ONLY for demonstrating the flow structure.
-    // A real implementation MUST query a persistent database here.
+    console.warn("[getTasksFlow] MOCK IMPLEMENTATION: Attempting to read tasks from in-memory state.");
     let mockTasks: Task[] = [];
     try {
         // Dynamically import to access the state (NOT RECOMMENDED FOR PRODUCTION)
         const { conversationState } = await import('@/actions/handle-user-message');
-        if (conversationState && conversationState.tasks) {
+
+        if (conversationState && Array.isArray(conversationState.tasks)) {
              mockTasks = conversationState.tasks.map(t => ({
-                 id: t.id,
-                 description: t.description,
-                 priority: t.priority,
+                 id: t.id ?? `missing-id-${Math.random()}`, // Handle potential missing ID in mock state
+                 description: t.description ?? 'No description',
+                 priority: t.priority ?? 'medium',
                  dueDate: t.dueDate,
-                 completed: t.completed,
+                 completed: t.completed ?? false,
              }));
-             console.log("[getTasksFlow] Mocking database read. Found tasks in memory:", mockTasks);
+             console.log(`[getTasksFlow] Mock Read SUCCESS: Found ${mockTasks.length} tasks in memory.`);
+             // console.log("[getTasksFlow] In-memory tasks:", JSON.stringify(mockTasks, null, 2)); // Uncomment for details
         } else {
-             console.warn("[getTasksFlow] Mocking database read. Could not access in-memory tasks or tasks array is missing.");
+             console.warn("[getTasksFlow] Mock Read WARNING: Could not access in-memory tasks array or state is invalid.");
         }
 
     } catch (importError) {
-         console.error("[getTasksFlow] Mocking database read. Error importing handle-user-message to access state:", importError);
+         console.error("[getTasksFlow] Mock Read ERROR: Failed to import handle-user-message to access state:", importError);
     }
 
 
