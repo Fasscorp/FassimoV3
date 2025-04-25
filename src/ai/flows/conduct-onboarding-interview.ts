@@ -27,9 +27,9 @@ export type ConductOnboardingInterviewInput = z.infer<typeof ConductOnboardingIn
 
 // Output schema: Provides the next question or the final collected data
 const OnboardingDataSchema = z.object({
-    name: z.string().describe("The user's name."),
-    goal: z.string().describe("The user's goal for the 30-day trial."),
-    channel: z.enum(['Chat', 'Email', 'Whatsapp']).describe("The user's preferred communication channel."),
+    name: z.string().optional().describe("The user's name."), // Make optional initially
+    goal: z.string().optional().describe("The user's goal for the 30-day trial."), // Make optional initially
+    channel: z.enum(['Chat', 'Email', 'Whatsapp']).optional().describe("The user's preferred communication channel."), // Make optional initially
     hasStripe: z.boolean().optional().describe("Whether the user confirmed having a Stripe account."), // Added Stripe info
 }).describe('The collected onboarding information.');
 export type OnboardingData = z.infer<typeof OnboardingDataSchema>;
@@ -84,42 +84,49 @@ const onboardingInterviewPrompt = ai.definePrompt({
   output: {
     schema: ConductOnboardingInterviewOutputSchema, // Expects the structured output (next question or final data)
   },
-  prompt: `You are an Onboarding Interviewer AI. Your task is to conduct a simple onboarding interview based on the provided conversation history. Ask the questions one by one.
+  // Refined prompt logic for clarity and sequence
+  prompt: `You are an Onboarding Interviewer AI. Your task is to conduct a simple onboarding interview by asking questions ONE BY ONE based on the provided conversation history.
 
-Conversation History:
+Conversation History (most recent message last):
 {{#each conversationHistory}}
 {{sender}}: {{text}}
 {{/each}}
 
-Analyze the history to determine which questions have been answered:
-1. Name: "${QUESTIONS.name}"
-2. Goal: "${QUESTIONS.goal}"
-3. Channel: "${QUESTIONS.channel}" (Must be one of Chat, Email, or Whatsapp)
-4. Stripe: "${QUESTIONS.stripe}" (Must be Yes or No)
+Interview Questions & Required Answers:
+1. Name: "${QUESTIONS.name}" (Answer: Any non-empty string)
+2. Goal: "${QUESTIONS.goal}" (Answer: Any non-empty string)
+3. Channel: "${QUESTIONS.channel}" (Answer: Must be one of Chat, Email, or Whatsapp)
+4. Stripe: "${QUESTIONS.stripe}" (Answer: Must be Yes or No)
 
-Based on the conversation history, determine the *very next* question to ask.
+Your Goal: Determine the *next* question to ask, or if the interview is complete.
 
-If the user has not yet answered the 'name' question, ask: "${QUESTIONS.name}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false.
-If the user has answered 'name' but not 'goal', ask: "${QUESTIONS.goal}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false.
-If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channelWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false. VERY IMPORTANT: Include the "[OPTIONS: Chat, Email, Whatsapp]" marker exactly as written in the question.
-If the user has answered 'name', 'goal', and 'channel' but not 'stripe', ask: "${QUESTIONS.stripeWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false. VERY IMPORTANT: Include the "[OPTIONS: Yes, No]" marker exactly as written in the question.
+Follow these steps STRICTLY:
+1.  Analyze the history to see which questions have already been asked and answered correctly. Pay close attention to the *last* few messages to understand the current context.
+2.  Extract any valid answers already provided (name, goal, channel, stripe status). Store them temporarily.
+3.  Check if the 'name' question needs to be asked. If the history does NOT contain an AI message asking for the name OR if the last AI message asked for the name but there's no user response yet, then ask: "${QUESTIONS.name}". Set 'isComplete' to false. Set 'onboardingData' to null. Set 'answeredStripe' to false.
+4.  Check if the 'goal' question needs to be asked. If 'name' has been answered (found in history) but the 'goal' question hasn't been asked OR the last AI message asked for the goal but there's no user response yet, then ask: "${QUESTIONS.goal}". Set 'isComplete' to false. Set 'onboardingData' to null. Set 'answeredStripe' to false.
+5.  Check if the 'channel' question needs to be asked. If 'name' and 'goal' have been answered, but 'channel' hasn't been asked OR the last AI message asked for the channel but there's no valid user response (Chat, Email, or Whatsapp) yet, then ask: "${QUESTIONS.channelWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null. Set 'answeredStripe' to false. VERY IMPORTANT: Include the "[OPTIONS: Chat, Email, Whatsapp]" marker exactly as written in the question.
+6.  Check if the 'stripe' question needs to be asked. If 'name', 'goal', and 'channel' have been answered, but 'stripe' hasn't been asked OR the last AI message asked about Stripe but there's no valid user response (Yes or No) yet, then ask: "${QUESTIONS.stripeWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null. Set 'answeredStripe' to false. VERY IMPORTANT: Include the "[OPTIONS: Yes, No]" marker exactly as written in the question.
 
-If the user just answered the 'stripe' question (their last message was 'Yes' or 'No' in response to the stripe question):
-- Extract the name, goal, channel, and stripe answer (true for 'Yes', false for 'No').
-- Set 'isComplete' to true.
-- Set 'nextQuestion' to null or omit it.
-- Set 'answeredStripe' to true. // Signal that Stripe was the last question answered
-- Populate the 'onboardingData' object with the extracted values (name, goal, channel, hasStripe).
-- Do not ask any more questions.
+7.  Check for Interview Completion:
+    a.  Did the user *just* answer the Stripe question? Check if the last AI message asked "${QUESTIONS.stripeWithOptions}" AND the user's latest response is 'Yes' or 'No'.
+    b.  If YES (Stripe was just answered):
+        - Extract name, goal, channel from history.
+        - Determine 'hasStripe' (true for 'Yes', false for 'No').
+        - Set 'isComplete' to true.
+        - Set 'nextQuestion' to null.
+        - Set 'answeredStripe' to true. // VERY IMPORTANT flag
+        - Populate 'onboardingData' with name, goal, channel, and hasStripe.
+        - STOP. Do not ask more questions.
+    c.  If NO (Stripe wasn't just answered, but all answers ARE present in the history):
+        - Extract name, goal, channel, and stripe answer from history.
+        - Set 'isComplete' to true.
+        - Set 'nextQuestion' to null.
+        - Set 'answeredStripe' to false. // It wasn't answered *this* turn
+        - Populate 'onboardingData' with all extracted values.
+        - STOP.
 
-If the user has answered all questions *before* this turn (i.e., the history already contains answers to all 4), simply confirm completion:
-- Set 'isComplete' to true.
-- Set 'nextQuestion' to null or omit it.
-- Set 'answeredStripe' to false (as it wasn't answered *this* turn).
-- Extract name, goal, channel, and stripe answer from history.
-- Populate 'onboardingData' with the extracted values.
-
-Return ONLY a valid JSON object conforming to the output schema. Do not include any other text, explanation, or conversational elements outside the JSON structure.
+Output Format: Return ONLY a valid JSON object conforming to the output schema. Do not include any other text, explanation, or conversational elements. Ensure all required fields in the schema are present based on whether the interview is complete or not. If not complete, 'onboardingData' should be null or omitted. If complete, 'nextQuestion' should be null or omitted.
 `,
 });
 
@@ -134,59 +141,82 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
     outputSchema: ConductOnboardingInterviewOutputSchema,
   },
   async (input) => {
-    console.log("[conductOnboardingInterviewFlow] Flow invoked with history:", JSON.stringify(input.conversationHistory, null, 2));
+    console.log("[conductOnboardingInterviewFlow] ===== START FLOW =====");
+    console.log("[conductOnboardingInterviewFlow] History received:", JSON.stringify(input.conversationHistory, null, 2));
+
+    // Basic validation of history
+    if (!input.conversationHistory || input.conversationHistory.length === 0) {
+        console.warn("[conductOnboardingInterviewFlow] Warning: Empty or null conversation history received.");
+        // Decide how to handle - perhaps ask the first question?
+        // For now, let the prompt handle it, but log the warning.
+    }
+
     try {
         console.log("[conductOnboardingInterviewFlow] Calling onboardingInterviewPrompt...");
         const { output } = await onboardingInterviewPrompt(input);
-        console.log("[conductOnboardingInterviewFlow] Prompt returned output:", JSON.stringify(output, null, 2)); // Log raw output
+        console.log("[conductOnboardingInterviewFlow] Raw prompt output:", JSON.stringify(output, null, 2)); // Log raw output
 
         if (!output) {
             console.error("[conductOnboardingInterviewFlow] Error: Prompt did not return an output.");
             throw new Error("Onboarding Interview prompt did not return an output.");
         }
 
-        // Validate output structure based on completion status
+        // --- Detailed Validation and Logging ---
         if (output.isComplete) {
-          console.log("[conductOnboardingInterviewFlow] Output indicates interview is complete. Validating data...");
-          if (!output.onboardingData || typeof output.onboardingData.name !== 'string' || typeof output.onboardingData.goal !== 'string' || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel) || (output.answeredStripe && typeof output.onboardingData.hasStripe !== 'boolean')) {
-              // Added validation for hasStripe only if answeredStripe is true
-            console.error("[conductOnboardingInterviewFlow] Error: Interview marked complete but onboardingData is invalid or missing. Output:", output);
-            // Attempt to recover if possible, otherwise throw
-             if (output.onboardingData && typeof output.onboardingData.channel === 'string' && !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
-                 console.warn("[conductOnboardingInterviewFlow] Warning: Invalid channel detected in completed data. Value:", output.onboardingData.channel);
-                 // For now, throw error, but could add logic to re-ask the channel question
-             }
-             if (output.answeredStripe && output.onboardingData && typeof output.onboardingData.hasStripe !== 'boolean') {
-                 console.warn("[conductOnboardingInterviewFlow] Warning: Stripe answered but hasStripe is not boolean. Value:", output.onboardingData.hasStripe);
-             }
-            throw new Error("Interview marked complete but onboardingData is invalid or missing.");
+          console.log("[conductOnboardingInterviewFlow] Output indicates interview IS COMPLETE.");
+          if (!output.onboardingData) {
+            console.error("[conductOnboardingInterviewFlow] Validation Error: isComplete=true but onboardingData is missing.");
+            throw new Error("Interview marked complete but onboardingData is missing.");
           }
-          if (output.nextQuestion) {
-             console.warn("[conductOnboardingInterviewFlow] Warning: Interview complete but nextQuestion is present. Clearing it. Output:", output);
-             // Clear nextQuestion if it shouldn't be there
-             output.nextQuestion = undefined;
+          // Check required fields for completion (allow optional if that's intended)
+          if (typeof output.onboardingData.name !== 'string' || output.onboardingData.name === '') {
+              console.warn("[conductOnboardingInterviewFlow] Validation Warning: Completed data missing 'name'.");
+              // Consider if this should be an error or just a warning
           }
-           console.log("[conductOnboardingInterviewFlow] Completed data validated successfully.");
-        } else {
-           console.log("[conductOnboardingInterviewFlow] Output indicates interview is NOT complete. Validating next question...");
-          if (!output.nextQuestion || typeof output.nextQuestion !== 'string') {
-            console.error("[conductOnboardingInterviewFlow] Error: Interview not complete but nextQuestion is invalid or missing. Output:", output);
+           if (typeof output.onboardingData.goal !== 'string' || output.onboardingData.goal === '') {
+              console.warn("[conductOnboardingInterviewFlow] Validation Warning: Completed data missing 'goal'.");
+          }
+           if (!output.onboardingData.channel || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
+               console.warn(`[conductOnboardingInterviewFlow] Validation Warning: Completed data has invalid 'channel': ${output.onboardingData.channel}`);
+               // Make this an error if channel is strictly required
+               // throw new Error("Interview marked complete but onboardingData has invalid channel.");
+           }
+           // Check hasStripe *only if* answeredStripe is true, otherwise it's optional
+           if (output.answeredStripe === true && typeof output.onboardingData.hasStripe !== 'boolean') {
+                console.error("[conductOnboardingInterviewFlow] Validation Error: answeredStripe=true but onboardingData.hasStripe is not boolean.");
+                throw new Error("Stripe answered but hasStripe boolean is missing in completed data.");
+            }
+            if (output.nextQuestion) {
+               console.warn("[conductOnboardingInterviewFlow] Validation Warning: Interview complete but nextQuestion is present. Clearing it.");
+               output.nextQuestion = undefined; // Clean up inconsistent state
+            }
+            console.log("[conductOnboardingInterviewFlow] Completed data looks valid (or warnings noted).");
+
+        } else { // Interview is NOT complete
+           console.log("[conductOnboardingInterviewFlow] Output indicates interview IS NOT COMPLETE.");
+          if (!output.nextQuestion || typeof output.nextQuestion !== 'string' || output.nextQuestion.trim() === '') {
+            console.error("[conductOnboardingInterviewFlow] Validation Error: Interview not complete but nextQuestion is invalid or missing.");
             throw new Error("Interview not complete but nextQuestion is invalid or missing.");
           }
           if (output.onboardingData) {
-              console.warn("[conductOnboardingInterviewFlow] Warning: Interview not complete but onboardingData is present. Clearing it. Output:", output);
-              // Clear onboardingData if it shouldn't be there
-              output.onboardingData = undefined;
+              console.warn("[conductOnboardingInterviewFlow] Validation Warning: Interview not complete but onboardingData is present. Clearing it.");
+              output.onboardingData = undefined; // Clean up inconsistent state
           }
-           // Clear answeredStripe flag if interview is not complete
-           output.answeredStripe = false;
+           // Ensure answeredStripe is false or undefined when not complete
+           if (output.answeredStripe === true) {
+               console.warn("[conductOnboardingInterviewFlow] Validation Warning: Interview not complete but answeredStripe is true. Setting to false.");
+               output.answeredStripe = false;
+           }
            console.log("[conductOnboardingInterviewFlow] Next question validated successfully:", output.nextQuestion);
         }
 
-        console.log("[conductOnboardingInterviewFlow] Flow logic successful. Returning validated output:", JSON.stringify(output, null, 2));
+        console.log("[conductOnboardingInterviewFlow] Flow logic successful. Returning validated/cleaned output:", JSON.stringify(output, null, 2));
+        console.log("[conductOnboardingInterviewFlow] ===== END FLOW =====");
         return output;
+
     } catch (error) {
         console.error("[conductOnboardingInterviewFlow] Error during prompt execution or validation:", error);
+        console.log("[conductOnboardingInterviewFlow] ===== END FLOW (with error) =====");
         if (error instanceof Error) {
              throw new Error(`Error in conductOnboardingInterviewFlow calling prompt: ${error.message}`);
         }
