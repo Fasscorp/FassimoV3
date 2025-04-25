@@ -45,9 +45,11 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
     const praiseResult = await praiseAgent({ message: message }); // Use the original message for praise
     console.log("Praise Agent Result:", praiseResult);
 
-    if (!praiseResult || !praiseResult.praisedMessage) {
-        console.error("Praise Agent did not return a valid praised message.");
-        return "Sorry, the Praise Agent failed to process the message.";
+    // Check if the Praise Agent returned a valid result and the praised message
+    if (!praiseResult || typeof praiseResult.praisedMessage !== 'string') {
+        console.error("Praise Agent did not return a valid praised message. Result:", praiseResult);
+        // Provide a more specific error message indicating the Praise Agent failed
+        return "Sorry, the Praise Agent couldn't process the message correctly.";
     }
 
     // 4. Return Praise Agent's Response
@@ -56,7 +58,8 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
     return praiseResult.praisedMessage;
 
   } catch (error) {
-    console.error("Error in handleUserMessage:", error);
+    // Log the specific error for easier debugging
+    console.error("Error caught in handleUserMessage:", error);
     // Provide a generic error response to the user
     return "Sorry, I encountered an internal error while processing your request. Please try again later.";
   }
