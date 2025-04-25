@@ -11,6 +11,7 @@
 
 import { ai } from '@/ai/ai-instance';
 import { z } from 'genkit';
+import { internalAddTask, type Task } from './get-tasks'; // Import internal function and Task type
 
 // Define the input schema for adding a task
 const AddTaskInputSchema = z.object({
@@ -63,9 +64,18 @@ const addTaskFlow = ai.defineFlow<
     // 3. Get the generated document ID from Firestore.
     // ----------------------------------------
 
-    // Mocking database interaction:
+    // Mocking database interaction using the internal function:
     const mockTaskId = `task_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    console.log(`[addTaskFlow] Mocking database add. Generated Task ID: ${mockTaskId}`);
+    const newTask: Task = {
+        id: mockTaskId,
+        description: input.description,
+        priority: input.priority,
+        dueDate: input.dueDate,
+        completed: false, // New tasks are not completed
+    };
+
+    internalAddTask(newTask); // Add to the shared mock DB via internal function
+    console.log(`[addTaskFlow] Task added via internal function. Task ID: ${mockTaskId}.`);
 
     // Simulate success
     const output: AddTaskOutput = {

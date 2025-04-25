@@ -11,6 +11,7 @@
 
 import { ai } from '@/ai/ai-instance';
 import { z } from 'genkit';
+import { internalUpdateTask, type Task } from './get-tasks'; // Import internal function and Task type
 
 // Define the input schema for updating a task
 const UpdateTaskInputSchema = z.object({
@@ -18,7 +19,7 @@ const UpdateTaskInputSchema = z.object({
   updates: z.object({
       description: z.string().optional().describe('Updated description.'),
       priority: z.enum(['high', 'medium', 'low']).optional().describe('Updated priority.'),
-      dueDate: z.string().optional().describe('Updated due date (ISO 8601 format).'),
+      dueDate: z.string().optional().nullable().describe('Updated due date (ISO 8601 format) or null to clear.'), // Allow null to clear date
       completed: z.boolean().optional().describe('Updated completion status.'),
   }).describe('The fields to update.'),
 });
@@ -61,40 +62,31 @@ const updateTaskFlow = ai.defineFlow<
     // In a real application:
     // 1. Connect to Firestore (or your chosen DB).
     // 2. Find the task document with the given taskId.
-    // 3. Update the document with the provided fields in input.updates.
+    // 3. Update the document with the provided fields in input.updates. Handle nulls for clearing fields.
     // 4. Handle cases where the task is not found.
     // ----------------------------------------
 
-    // Mocking database interaction:
-    let success = false;
-    let message = `Task with ID ${input.taskId} not found in mock state.`;
-
-     try {
-        // Dynamically import to access the state (NOT RECOMMENDED FOR PRODUCTION)
-        const { conversationState } = await import('@/actions/handle-user-message');
-
-        if (conversationState && conversationState.tasks) {
-             const taskIndex = conversationState.tasks.findIndex(t => t.id === input.taskId);
-
-             if (taskIndex > -1) {
-                 // Apply updates
-                 const updatedTask = { ...conversationState.tasks[taskIndex], ...input.updates };
-                 conversationState.tasks[taskIndex] = updatedTask; // Update in-memory state
-
-                 success = true;
-                 message = `Task ${input.taskId} updated successfully in mock state.`;
-                 console.log(`[updateTaskFlow] Mocking database update for Task ID: ${input.taskId}. New state:`, updatedTask);
-             }
-        } else {
-             console.warn("[updateTaskFlow] Mocking database update. Could not access in-memory tasks or tasks array is missing.");
-             message = "Could not access task list for update.";
-        }
-
-    } catch (importError) {
-         console.error("[updateTaskFlow] Mocking database update. Error importing handle-user-message:", importError);
-         message = "Internal error accessing task list for update.";
+    // Mocking database interaction using the internal function:
+    const updatesToApply: Partial<Task> = {};
+    if (input.updates.description !== undefined) {
+        updatesToApply.description = input.updates.description;
+    }
+    if (input.updates.priority !== undefined) {
+        updatesToApply.priority = input.updates.priority;
+    }
+    if (input.updates.hasOwnProperty('dueDate')) { // Check if dueDate was explicitly provided
+        updatesToApply.dueDate = input.updates.dueDate === null ? undefined : input.updates.dueDate; // Map null to undefined for mock DB
+    }
+    if (input.updates.completed !== undefined) {
+        updatesToApply.completed = input.updates.completed;
     }
 
+    const success = internalUpdateTask(input.taskId, updatesToApply); // Update using internal function
+    let message = success
+        ? `Task ${input.taskId} updated successfully.`
+        : `Task with ID ${input.taskId} not found.`;
+
+    console.log(`[updateTaskFlow] Task update attempt via internal function. Success: ${success}`);
 
     const output: UpdateTaskOutput = {
       success: success,

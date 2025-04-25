@@ -36,6 +36,14 @@ const GetTasksOutputSchema = z.object({
 });
 export type GetTasksOutput = z.infer<typeof GetTasksOutputSchema>;
 
+// --- Mock Persistent Storage (Replace with Firestore in production) ---
+// This array will persist across requests *within the same server instance*.
+// It will be lost on server restarts.
+// Keep it internal to the module, don't export it.
+let mockTaskDatabase: Task[] = [];
+console.log("[Task Flows] Initialized mock task database (in-memory).");
+// --------------------------------------------------------------------
+
 /**
  * Retrieves the list of tasks.
  * In a real application, this would interact with a database (e.g., Firestore).
@@ -70,36 +78,39 @@ const getTasksFlow = ai.defineFlow<
     // ----------------------------------------
 
     // Mocking database interaction:
-    console.warn("[getTasksFlow] MOCK IMPLEMENTATION: Attempting to read tasks from in-memory state.");
-    let mockTasks: Task[] = [];
-    try {
-        // Dynamically import to access the state (NOT RECOMMENDED FOR PRODUCTION)
-        const { conversationState } = await import('@/actions/handle-user-message');
+    console.log("[getTasksFlow] MOCK IMPLEMENTATION: Reading tasks from mock in-memory database.");
+    // Apply filters here if input included them (e.g., filter by completed status)
+    const tasksToReturn = [...mockTaskDatabase]; // Return a copy
 
-        if (conversationState && Array.isArray(conversationState.tasks)) {
-             mockTasks = conversationState.tasks.map(t => ({
-                 id: t.id ?? `missing-id-${Math.random()}`, // Handle potential missing ID in mock state
-                 description: t.description ?? 'No description',
-                 priority: t.priority ?? 'medium',
-                 dueDate: t.dueDate,
-                 completed: t.completed ?? false,
-             }));
-             console.log(`[getTasksFlow] Mock Read SUCCESS: Found ${mockTasks.length} tasks in memory.`);
-             // console.log("[getTasksFlow] In-memory tasks:", JSON.stringify(mockTasks, null, 2)); // Uncomment for details
-        } else {
-             console.warn("[getTasksFlow] Mock Read WARNING: Could not access in-memory tasks array or state is invalid.");
-        }
-
-    } catch (importError) {
-         console.error("[getTasksFlow] Mock Read ERROR: Failed to import handle-user-message to access state:", importError);
-    }
-
+    console.log(`[getTasksFlow] Mock Read SUCCESS: Found ${tasksToReturn.length} tasks in memory.`);
+    // console.log("[getTasksFlow] In-memory tasks:", JSON.stringify(tasksToReturn, null, 2)); // Uncomment for details
 
     const output: GetTasksOutput = {
-      tasks: mockTasks,
+      tasks: tasksToReturn,
     };
 
     console.log("[getTasksFlow] Flow successful. Returning output:", output);
     return output;
   }
 );
+
+// Functions internal to the module to manipulate the mock DB
+// These are NOT exported as they are not async and violate 'use server'
+function internalAddTask(newTask: Task) {
+    mockTaskDatabase.push(newTask);
+    console.log(`[internalAddTask] Mock DB Add. ID: ${newTask.id}. DB size: ${mockTaskDatabase.length}`);
+}
+
+function internalUpdateTask(taskId: string, updates: Partial<Task>): boolean {
+     const taskIndex = mockTaskDatabase.findIndex(t => t.id === taskId);
+     if (taskIndex > -1) {
+         mockTaskDatabase[taskIndex] = { ...mockTaskDatabase[taskIndex], ...updates };
+         console.log(`[internalUpdateTask] Mock DB Update. ID: ${taskId}. New state:`, mockTaskDatabase[taskIndex]);
+         return true;
+     }
+     console.warn(`[internalUpdateTask] Mock DB Update FAILED. Task ID ${taskId} not found.`);
+     return false;
+}
+
+// Expose access to the internal functions for other flows in this directory
+export { internalAddTask, internalUpdateTask };
