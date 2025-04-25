@@ -37,7 +37,7 @@ export function ChatInterface() {
       setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
       console.error("Error processing message:", error);
-      const errorMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: "Sorry, I encountered an error. Please try again." };
+      const errorMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: `Sorry, I encountered an error. Please try again. Details: ${error instanceof Error ? error.message : 'Unknown error'}` };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
@@ -65,7 +65,7 @@ export function ChatInterface() {
     <div className="flex justify-center items-center min-h-screen bg-background p-4">
       <Card className="w-full max-w-2xl shadow-lg rounded-lg">
         <CardHeader className="border-b">
-          <CardTitle className="text-lg font-semibold text-foreground">GeminiFlow Agent</CardTitle>
+          <CardTitle className="text-lg font-semibold text-foreground">FASSIMO v3.0</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <ScrollArea className="h-[500px] p-4" ref={scrollAreaRef}>
