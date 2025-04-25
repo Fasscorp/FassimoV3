@@ -29,7 +29,20 @@ export type PraiseAgentOutput = z.infer<typeof PraiseAgentOutputSchema>;
  * @returns The praised message.
  */
 export async function praiseAgent(input: PraiseAgentInput): Promise<PraiseAgentOutput> {
-  return praiseAgentFlow(input);
+  console.log("[praiseAgent] Invoked with input:", input);
+  try {
+    const result = await praiseAgentFlow(input);
+    console.log("[praiseAgent] Flow completed successfully. Result:", result);
+    return result;
+  } catch (error) {
+    console.error("[praiseAgent] Error executing praiseAgentFlow:", error);
+    // Re-throw the error so it can be caught by the caller (handleUserMessage)
+    // but add context if possible.
+    if (error instanceof Error) {
+        throw new Error(`Praise Agent failed: ${error.message}`);
+    }
+    throw new Error("Praise Agent failed with an unknown error.");
+  }
 }
 
 // Define the prompt for the Praise Agent
@@ -45,7 +58,7 @@ const praiseAgentPrompt = ai.definePrompt({
 
 Message: {{{message}}}
 
-Return the modified message in the 'praisedMessage' field.`,
+Return the modified message in the 'praisedMessage' field of the JSON output. Ensure the output is valid JSON conforming to the schema.`,
 });
 
 // Define the Genkit flow for the Praise Agent
@@ -59,12 +72,29 @@ const praiseAgentFlow = ai.defineFlow<
     outputSchema: PraiseAgentOutputSchema,
   },
   async (input) => {
-    console.log("Praise Agent Flow invoked with:", input);
-    const { output } = await praiseAgentPrompt(input);
-    console.log("Praise Agent Flow output:", output);
-    if (!output) {
-        throw new Error("Praise Agent did not return an output.");
+    console.log("[praiseAgentFlow] Flow invoked with:", input);
+    try {
+        console.log("[praiseAgentFlow] Calling praiseAgentPrompt...");
+        const { output } = await praiseAgentPrompt(input);
+        console.log("[praiseAgentFlow] praiseAgentPrompt returned output:", output);
+
+        if (!output) {
+            console.error("[praiseAgentFlow] Error: praiseAgentPrompt did not return an output.");
+            throw new Error("Praise Agent prompt did not return an output.");
+        }
+         if (typeof output.praisedMessage !== 'string') {
+             console.error("[praiseAgentFlow] Error: praiseAgentPrompt output is missing 'praisedMessage' or it's not a string. Output:", output);
+            throw new Error("Praise Agent prompt returned invalid output structure.");
+        }
+        console.log("[praiseAgentFlow] Flow successful. Returning output:", output);
+        return output;
+    } catch (error) {
+        console.error("[praiseAgentFlow] Error during prompt execution:", error);
+        // Re-throw the error to be caught by the calling function (praiseAgent)
+        if (error instanceof Error) {
+             throw new Error(`Error in praiseAgentFlow calling prompt: ${error.message}`);
+        }
+       throw new Error("Unknown error occurred within praiseAgentFlow.");
     }
-    return output;
   }
 );
