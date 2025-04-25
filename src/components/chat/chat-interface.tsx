@@ -167,7 +167,8 @@ export function ChatInterface() {
       <Card className="w-full max-w-2xl shadow-lg rounded-lg">
         <CardHeader className="border-b flex flex-row justify-between items-center"> {/* Use flexbox for alignment */}
           <CardTitle className="text-lg font-semibold text-foreground">FASSIMO v3.0</CardTitle>
-          <Button variant="ghost" size="icon" onClick={resetChat} disabled={isLoading} aria-label="Reset chat">
+          {/* Changed variant to destructive */}
+          <Button variant="destructive" size="icon" onClick={resetChat} disabled={isLoading} aria-label="Reset chat">
             <RefreshCw className="h-5 w-5" />
           </Button>
         </CardHeader>
@@ -268,3 +269,4 @@ export function ChatInterface() {
     </div>
   );
 }
+
