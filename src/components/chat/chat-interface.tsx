@@ -2,6 +2,7 @@
 "use client";
 
 import * as React from "react";
+import Image from 'next/image'; // Import next/image
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -158,7 +159,18 @@ export function ChatInterface() {
 
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-background p-4">
+    <div className="flex flex-col justify-center items-center min-h-screen bg-background p-4">
+      {/* Skillplate Logo */}
+      <div className="mb-4">
+        <Image
+            src="https://cdn.skillplate.com/skillplate-logo.svg"
+            alt="Skillplate Logo"
+            width={150} // Adjust width as needed
+            height={50} // Adjust height as needed
+            priority // Load logo faster
+        />
+      </div>
+      {/* Chat Card */}
       <Card className="w-full max-w-2xl shadow-lg rounded-lg">
         <CardHeader className="border-b flex flex-row justify-between items-center">
           <CardTitle className="text-lg font-semibold text-foreground">FASSIMO v3.0</CardTitle>
