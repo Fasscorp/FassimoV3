@@ -34,7 +34,7 @@ const OnboardingDataSchema = z.object({
 export type OnboardingData = z.infer<typeof OnboardingDataSchema>;
 
 const ConductOnboardingInterviewOutputSchema = z.object({
-  nextQuestion: z.string().optional().describe('The next question to ask the user.'),
+  nextQuestion: z.string().optional().describe('The next question to ask the user. May contain [OPTIONS: ...] marker.'),
   isComplete: z.boolean().describe('Indicates if the interview is complete.'),
   onboardingData: OnboardingDataSchema.optional().describe('The final collected data when the interview is complete.'),
 });
@@ -44,7 +44,8 @@ export type ConductOnboardingInterviewOutput = z.infer<typeof ConductOnboardingI
 const QUESTIONS = {
     name: "What is your name?",
     goal: "What is your goal for the 30 day free trial?",
-    channel: "What is your preferred channel of communication (Chat, Email, or Whatsapp)?",
+    channel: "What is your preferred channel of communication?", // Base question text
+    channelWithOptions: "What is your preferred channel of communication? [OPTIONS: Chat, Email, Whatsapp]", // Question with marker for buttons
 };
 
 /**
@@ -92,10 +93,10 @@ Analyze the history to determine which questions have been answered:
 
 If the user has not yet answered the 'name' question, ask: "${QUESTIONS.name}". Set 'isComplete' to false.
 If the user has answered 'name' but not 'goal', ask: "${QUESTIONS.goal}". Set 'isComplete' to false.
-If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channel}". Set 'isComplete' to false.
+If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channelWithOptions}". Set 'isComplete' to false. VERY IMPORTANT: Include the "[OPTIONS: Chat, Email, Whatsapp]" marker exactly as written in the question.
 
 If the user has answered all three questions:
-- Extract the name, goal, and channel (ensure channel is exactly 'Chat', 'Email', or 'Whatsapp').
+- Extract the name, goal, and channel (ensure channel is exactly 'Chat', 'Email', or 'Whatsapp' based on their response to the channel question).
 - Set 'isComplete' to true.
 - Set 'nextQuestion' to null or omit it.
 - Populate the 'onboardingData' object with the extracted values.
@@ -131,12 +132,17 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
         if (output.isComplete) {
           if (!output.onboardingData || typeof output.onboardingData.name !== 'string' || typeof output.onboardingData.goal !== 'string' || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
             console.error("[conductOnboardingInterviewFlow] Error: Interview marked complete but onboardingData is invalid or missing. Output:", output);
+            // Attempt to recover if possible, otherwise throw
+             if (output.onboardingData && !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
+                 console.warn("[conductOnboardingInterviewFlow] Warning: Invalid channel detected in completed data. Attempting to fix or request again might be needed.");
+                 // For now, throw error, but could add logic to re-ask the channel question
+             }
             throw new Error("Interview marked complete but onboardingData is invalid or missing.");
           }
           if (output.nextQuestion) {
-             console.warn("[conductOnboardingInterviewFlow] Warning: Interview complete but nextQuestion is present. Output:", output);
-             // Optionally clear nextQuestion if it shouldn't be there
-             // output.nextQuestion = undefined;
+             console.warn("[conductOnboardingInterviewFlow] Warning: Interview complete but nextQuestion is present. Clearing it. Output:", output);
+             // Clear nextQuestion if it shouldn't be there
+             output.nextQuestion = undefined;
           }
         } else {
           if (!output.nextQuestion || typeof output.nextQuestion !== 'string') {
@@ -144,9 +150,9 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
             throw new Error("Interview not complete but nextQuestion is invalid or missing.");
           }
           if (output.onboardingData) {
-              console.warn("[conductOnboardingInterviewFlow] Warning: Interview not complete but onboardingData is present. Output:", output);
-              // Optionally clear onboardingData if it shouldn't be there
-              // output.onboardingData = undefined;
+              console.warn("[conductOnboardingInterviewFlow] Warning: Interview not complete but onboardingData is present. Clearing it. Output:", output);
+              // Clear onboardingData if it shouldn't be there
+              output.onboardingData = undefined;
           }
         }
 
@@ -161,5 +167,3 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
     }
   }
 );
-
-    

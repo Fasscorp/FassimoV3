@@ -7,20 +7,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, Plus, Clipboard, RefreshCw } from "lucide-react"; // Added RefreshCw icon
+import { Send, Plus, Clipboard, RefreshCw, MessageSquare, Mail, Phone } from "lucide-react"; // Added more icons
 import { handleUserMessage } from '@/actions/handle-user-message'; // Action to handle user message
+
+interface MessageAction {
+  label: string;
+  trigger: string;
+}
 
 interface Message {
   id: string;
-  sender: "user" | "ai" | "system" | "action"; // Added 'system' and 'action' sender types
+  sender: "user" | "ai" | "system" | "action";
   text: string;
-  actions?: Array<{ label: string; trigger: string }>; // Optional actions (buttons)
+  actions?: MessageAction[]; // Optional actions (buttons)
 }
 
 // Define the specific trigger messages
 const ONBOARDING_TRIGGER = 'START_ONBOARDING_INTERVIEW';
-const CREATE_PRODUCT_TRIGGER = 'START_CREATE_PRODUCT'; // Placeholder for future feature
-const RESET_CONVERSATION_TRIGGER = 'RESET_CONVERSATION'; // Trigger for resetting
+const CREATE_PRODUCT_TRIGGER = 'START_CREATE_PRODUCT';
+const RESET_CONVERSATION_TRIGGER = 'RESET_CONVERSATION';
 
 // Initial message definition
 const initialMessage: Message = {
@@ -43,21 +48,14 @@ export function ChatInterface() {
   // Function to reset the chat
   const resetChat = async () => {
     console.log("[resetChat] Resetting conversation...");
-    setIsLoading(true); // Show loading indicator during reset
+    setIsLoading(true);
     try {
-      // Call the server action with the reset trigger
       const resetResponse = await handleUserMessage(RESET_CONVERSATION_TRIGGER, 'chat');
-      // Reset local state
-      setMessages([
-          // Optionally display the response from the reset action, or just the initial message
-          // { id: 'reset-confirm', sender: 'system', text: resetResponse },
-          initialMessage // Reset to the initial greeting and options
-      ]);
+      setMessages([initialMessage]); // Reset to the initial greeting and options
       setInput("");
       setShowInput(false); // Hide input again
     } catch (error) {
        console.error("Error resetting chat:", error);
-       // Keep existing messages but show an error toast/message if preferred
        setMessages(prev => [...prev, { id: 'reset-error', sender: 'system', text: 'Failed to reset the conversation. Please try again.'}]);
     } finally {
         setIsLoading(false);
@@ -68,75 +66,74 @@ export function ChatInterface() {
   // Function to send a regular text message
   const sendMessage = async () => {
     const trimmedInput = input.trim();
-    if (!trimmedInput || isLoading) return; // Prevent sending while loading or empty
+    if (!trimmedInput || isLoading) return;
 
     const userMessage: Message = { id: Date.now().toString(), sender: "user", text: trimmedInput };
     setMessages((prev) => [...prev, userMessage]);
-    setInput(""); // Clear input immediately
+    setInput("");
 
     await processMessage(trimmedInput, "user");
   };
 
   // Function to handle button clicks (actions)
-  const handleActionClick = async (trigger: string) => {
-     if (isLoading) return; // Prevent action clicks while loading
+  const handleActionClick = async (trigger: string, label?: string) => {
+     if (isLoading) return;
 
-    // Find the message with the action to remove buttons after click
-    const actionMessageIndex = messages.findIndex(msg => msg.actions?.some(a => a.trigger === trigger));
+    // Remove actions from the message that was clicked
+    setMessages(prevMessages =>
+        prevMessages.map((msg) =>
+            msg.actions?.some(a => a.trigger === trigger) ? { ...msg, actions: undefined } : msg
+        )
+    );
 
-    if (actionMessageIndex !== -1) {
-        setMessages(prevMessages =>
-            prevMessages.map((msg, index) =>
-                index === actionMessageIndex ? { ...msg, actions: undefined } : msg
-            )
-        );
-    }
 
-    // Get the label for the clicked button to display as user message (optional, but good UX)
-    const actionLabel = messages[actionMessageIndex]?.actions?.find(a => a.trigger === trigger)?.label || trigger;
-
-    // Add the user's choice as a message (use 'action' sender type for clarity in history)
-    const userChoiceMessage: Message = { id: Date.now().toString(), sender: "action", text: actionLabel };
+    // Use the provided label or the trigger itself as the text for the history
+    const actionText = label || trigger;
+    const userChoiceMessage: Message = { id: Date.now().toString(), sender: "action", text: actionText };
     setMessages((prev) => [...prev, userChoiceMessage]);
 
-    // Process the trigger associated with the button
+
     await processMessage(trigger, "action"); // Pass trigger and 'action' type
 
-    // Show the input field after the initial choice is made
-    setShowInput(true);
+    // Show the input field after the initial choice or if needed based on response
+     setShowInput(true);
   };
 
   // Central function to process messages (user input or action triggers)
   const processMessage = async (content: string, type: "user" | "action") => {
-    // Note: User/Action message is added *before* calling this function
     setIsLoading(true);
 
     try {
-      // Call the server action to handle the message/trigger
-      // Use 'chat' channel for all interactions originating from the web UI
-      const aiResponseText = await handleUserMessage(content, 'chat');
+      // Call the server action - it now returns an object { responseText, actions? }
+      const response = await handleUserMessage(content, 'chat');
 
-      // Add the AI's response message
-      const aiMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: aiResponseText };
+      // Add the AI's response message, potentially with new actions
+      const aiMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          sender: "ai",
+          text: response.responseText,
+          actions: response.actions // Pass actions from backend response
+      };
       setMessages((prev) => [...prev, aiMessage]);
 
-      // Check if the response suggests the flow is ongoing or requires more input
-      const lowerResponse = aiResponseText.toLowerCase();
-      const requiresMoreInput = !(lowerResponse.includes("complete") || lowerResponse.includes("error") || lowerResponse.includes("sorry") || lowerResponse.startsWith("onboarding complete!"));
+      // Determine if input should be shown based on whether the AI provided actions or completed a flow
+      const lowerResponse = response.responseText.toLowerCase();
+      const isComplete = lowerResponse.includes("complete") || lowerResponse.includes("error") || lowerResponse.includes("sorry");
+      const hasActions = response.actions && response.actions.length > 0;
 
-      if (requiresMoreInput) {
-        setShowInput(true);
-      } else {
-        // Optionally hide input if the flow seems finished or hit an error state
-        // setShowInput(false); // Uncomment if you want to hide input on completion/error
+      if (!isComplete && !hasActions) {
+         setShowInput(true); // Show input if flow is ongoing and no buttons are provided
+      } else if (hasActions) {
+         setShowInput(false); // Hide input if buttons are provided for the next step
       }
-
+       // Keep input hidden if the flow completed or hit an error (unless explicitly shown above)
 
     } catch (error) {
       console.error("Error processing message:", error);
       const errorMessageText = `Sorry, I encountered an error processing your request. Details: ${error instanceof Error ? error.message : 'Unknown error'}`;
       const errorMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: errorMessageText };
       setMessages((prev) => [...prev, errorMessage]);
+      setShowInput(true); // Show input on error to allow user to retry or type something else
     } finally {
       setIsLoading(false);
     }
@@ -151,9 +148,7 @@ export function ChatInterface() {
   };
 
   React.useEffect(() => {
-    // Scroll to bottom when messages change
     if (scrollAreaRef.current) {
-        // Use querySelector to find the viewport element
         const viewport = scrollAreaRef.current.querySelector('div[style*="overflow: hidden scroll;"]');
         if (viewport) {
             viewport.scrollTop = viewport.scrollHeight;
@@ -165,9 +160,8 @@ export function ChatInterface() {
   return (
     <div className="flex justify-center items-center min-h-screen bg-background p-4">
       <Card className="w-full max-w-2xl shadow-lg rounded-lg">
-        <CardHeader className="border-b flex flex-row justify-between items-center"> {/* Use flexbox for alignment */}
+        <CardHeader className="border-b flex flex-row justify-between items-center">
           <CardTitle className="text-lg font-semibold text-foreground">FASSIMO v3.0</CardTitle>
-          {/* Changed variant to destructive */}
           <Button variant="destructive" size="icon" onClick={resetChat} disabled={isLoading} aria-label="Reset chat">
             <RefreshCw className="h-5 w-5" />
           </Button>
@@ -182,28 +176,39 @@ export function ChatInterface() {
                       message.sender === "user" ? "justify-end" : "justify-start"
                     }`}
                   >
-                    {/* AI and System messages aligned left */}
                     {(message.sender === "ai" || message.sender === "system") && (
                       <Avatar className="h-8 w-8">
                         <AvatarImage src="https://picsum.photos/32/32?grayscale" alt="AI Avatar" />
                         <AvatarFallback>AI</AvatarFallback>
                       </Avatar>
                     )}
-                    {/* Add placeholder for action messages if needed, or style them like system messages */}
-                    {message.sender === "action" && <div className="w-8 h-8 shrink-0"></div> }
+                     {/* Action messages styled like user input but aligned left */}
+                    {message.sender === "action" && (
+                      <>
+                         <Avatar className="h-8 w-8 invisible"> {/* Placeholder to maintain alignment */}
+                            <AvatarFallback>U</AvatarFallback>
+                          </Avatar>
+                          <div className="rounded-lg p-3 max-w-[75%] whitespace-pre-wrap bg-muted text-muted-foreground">
+                                {message.text}
+                          </div>
+                      </>
+                    )}
+
+                    {/* User messages */}
+                    {message.sender === "user" && (
+                         <div className="rounded-lg p-3 max-w-[75%] whitespace-pre-wrap bg-primary text-primary-foreground">
+                              {message.text}
+                         </div>
+                    )}
+
+                     {/* AI and System messages */}
+                     {(message.sender === "ai" || message.sender === "system") && (
+                         <div className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${message.sender === 'ai' ? 'bg-secondary text-secondary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                              {message.text}
+                         </div>
+                     )}
 
 
-                    <div
-                      className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${
-                        message.sender === "user"
-                          ? "bg-primary text-primary-foreground"
-                           : message.sender === "ai"
-                           ? "bg-secondary text-secondary-foreground"
-                           : "bg-muted text-muted-foreground" // Style for system and action messages
-                      }`}
-                    >
-                      {message.text}
-                    </div>
                     {message.sender === "user" && (
                       <Avatar className="h-8 w-8">
                         <AvatarImage src="https://picsum.photos/32/32" alt="User Avatar" />
@@ -213,18 +218,21 @@ export function ChatInterface() {
                   </div>
                    {/* Render action buttons below the message */}
                    {message.actions && (
-                     <div className="flex justify-start gap-2 mt-2 pl-11"> {/* Adjusted padding */}
+                     <div className="flex justify-start gap-2 mt-2 pl-11"> {/* Adjusted padding to align with AI message */}
                        {message.actions.map((action) => (
                          <Button
                            key={action.trigger}
                            variant="outline"
                            size="sm"
-                           onClick={() => handleActionClick(action.trigger)}
+                           onClick={() => handleActionClick(action.trigger, action.label)} // Pass label too
                            disabled={isLoading}
                          >
                             {/* Add icons based on action label - extend as needed */}
                             {action.label === "Onboarding" && <Clipboard className="mr-2 h-4 w-4" />}
                             {action.label === "Create Product" && <Plus className="mr-2 h-4 w-4" />}
+                            {action.label === "Chat" && <MessageSquare className="mr-2 h-4 w-4" />}
+                            {action.label === "Email" && <Mail className="mr-2 h-4 w-4" />}
+                            {action.label === "Whatsapp" && <Phone className="mr-2 h-4 w-4" />} {/* Using Phone as proxy */}
                             {action.label}
                          </Button>
                        ))}
@@ -246,7 +254,7 @@ export function ChatInterface() {
             </div>
           </ScrollArea>
         </CardContent>
-         {/* Conditionally render the input area - show if showInput is true */}
+         {/* Conditionally render the input area */}
          {showInput && (
           <CardFooter className="p-4 border-t">
             <div className="flex w-full items-center space-x-2">
@@ -269,4 +277,3 @@ export function ChatInterface() {
     </div>
   );
 }
-

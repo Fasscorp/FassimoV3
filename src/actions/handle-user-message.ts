@@ -57,6 +57,12 @@ function addMessageToHistory(sender: OnboardingMessage['sender'], text: string) 
     console.log("[addMessageToHistory] Updated history:", conversationState.history);
 }
 
+// Interface for the response sent back to the UI
+interface HandleUserMessageResponse {
+    responseText: string;
+    actions?: Array<{ label: string; trigger: string }>;
+}
+
 
 /**
  * Handles incoming user messages, manages conversation state, orchestrates agent interactions,
@@ -64,9 +70,9 @@ function addMessageToHistory(sender: OnboardingMessage['sender'], text: string) 
  *
  * @param message The user's message content or a special trigger.
  * @param channel The channel the message was received from (currently only 'chat' is fully handled).
- * @returns A promise that resolves to the final response string for the user.
+ * @returns A promise that resolves to the final response object for the UI.
  */
-export async function handleUserMessage(message: string, channel: 'email' | 'whatsapp' | 'voice' | 'chat'): Promise<string> {
+export async function handleUserMessage(message: string, channel: 'email' | 'whatsapp' | 'voice' | 'chat'): Promise<HandleUserMessageResponse> {
   console.log(`[handleUserMessage] Handling message from ${channel}: "${message}"`);
   console.log("[handleUserMessage] Current state before processing:", conversationState);
 
@@ -75,12 +81,15 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
     console.log("[handleUserMessage] Received reset trigger.");
     resetConversationState();
     // Optionally return a confirmation message, or let the UI handle resetting the display
-    return "Conversation reset.";
+    return { responseText: "Conversation reset." };
   }
 
 
-  // Determine the message sender type based on whether it's a trigger
-  const senderType: OnboardingMessage['sender'] = [ONBOARDING_TRIGGER, CREATE_PRODUCT_TRIGGER].includes(message) ? 'action' : 'user';
+  // Determine the message sender type based on whether it's a trigger or a button response
+  // Treat button responses (like Chat, Email, Whatsapp) as 'user' input for the LLM history.
+  const senderType: OnboardingMessage['sender'] =
+    (message === ONBOARDING_TRIGGER || message === CREATE_PRODUCT_TRIGGER) ? 'action' : 'user';
+
 
   // Add user message/action to history *unless* it's the initial trigger for a flow
   // (The trigger itself doesn't need to be in the history passed to the flow)
@@ -111,7 +120,9 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
 
       // Add AI response (question or completion message) to history
       if (onboardingResult.nextQuestion) {
-          addMessageToHistory('ai', onboardingResult.nextQuestion);
+          // Don't add the [OPTIONS] marker to history
+          const questionText = onboardingResult.nextQuestion.replace(/ \[OPTIONS:.*?\]$/, '');
+          addMessageToHistory('ai', questionText);
       }
 
       // Check if the interview is complete
@@ -126,31 +137,44 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
             const finalMessage = `Onboarding complete! Here's the collected information:\n\`\`\`json\n${jsonResponse}\n\`\`\``;
             addMessageToHistory('ai', finalMessage); // Add final summary to history
             console.log("[handleUserMessage] Returning formatted onboarding data:", finalMessage);
-            return finalMessage;
+            return { responseText: finalMessage };
           } catch (validationError) {
             console.error("[handleUserMessage] Error validating onboarding result schema:", validationError);
             const errorMsg = "Sorry, there was an issue processing the final onboarding information format.";
              addMessageToHistory('ai', errorMsg);
-            return errorMsg;
+            return { responseText: errorMsg };
           }
         } else {
             // Should ideally not happen if isComplete is true based on the flow logic
             console.error("[handleUserMessage] Onboarding complete but no data returned.");
              const errorMsg = "Onboarding seems complete, but I couldn't retrieve the final data.";
              addMessageToHistory('ai', errorMsg);
-             return errorMsg;
+             return { responseText: errorMsg };
         }
       } else if (onboardingResult.nextQuestion) {
-        // Ask the next question
-        console.log("[handleUserMessage] Asking next onboarding question:", onboardingResult.nextQuestion);
-        return onboardingResult.nextQuestion;
+        // Check for the [OPTIONS] marker to generate buttons
+        const optionsMatch = onboardingResult.nextQuestion.match(/ \[OPTIONS: (.*?)\]$/);
+        let actions: Array<{ label: string; trigger: string }> | undefined = undefined;
+        let questionText = onboardingResult.nextQuestion;
+
+        if (optionsMatch) {
+          const options = optionsMatch[1].split(',').map(opt => opt.trim());
+          actions = options.map(opt => ({ label: opt, trigger: opt })); // Use option text as trigger
+          questionText = onboardingResult.nextQuestion.replace(/ \[OPTIONS:.*?\]$/, ''); // Remove marker from text shown to user
+          console.log(`[handleUserMessage] Found options: ${options.join(', ')}. Generating actions.`);
+        }
+
+        // Ask the next question, potentially with actions (buttons)
+        console.log("[handleUserMessage] Asking next onboarding question:", questionText);
+        return { responseText: questionText, actions: actions };
+
       } else {
          // Handle unexpected case where interview is not complete but no question is provided
          console.error("[handleUserMessage] Onboarding flow error: Not complete, but no next question.");
          const errorMsg = "Sorry, I got stuck during the onboarding process. Could you try starting again?";
          addMessageToHistory('ai', errorMsg);
          conversationState.currentFlow = null; // Reset flow
-         return errorMsg;
+         return { responseText: errorMsg };
       }
 
     // --- Placeholder for Create Product Flow ---
@@ -160,7 +184,7 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
          const response = "The 'Create Product' feature is not implemented yet.";
          addMessageToHistory('ai', response);
          conversationState.currentFlow = null; // Reset immediately for this placeholder
-         return response;
+         return { responseText: response };
 
     // --- Default/Praise Agent Flow ---
     } else {
@@ -189,7 +213,7 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
             const spamResponse = "This message appears to be spam and has been discarded.";
             addMessageToHistory('ai', spamResponse);
             // conversationState.currentFlow = null; // Ensure flow state is cleared
-            return spamResponse;
+            return { responseText: spamResponse };
         }
 
         // 3. Executive Agent (Direct Delegation to Praise Agent FOR TESTING)
@@ -205,14 +229,14 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
             const errorResponse = "Sorry, the Praise Agent couldn't process the message correctly.";
              addMessageToHistory('ai', errorResponse);
              // conversationState.currentFlow = null; // Reset flow
-             return errorResponse;
+             return { responseText: errorResponse };
         }
 
         // 4. Return Praise Agent's Response
         console.log("[handleUserMessage] Step 4: Returning praised message to user:", praiseResult.praisedMessage);
         addMessageToHistory('ai', praiseResult.praisedMessage);
         // conversationState.currentFlow = null; // Reset flow
-        return praiseResult.praisedMessage;
+        return { responseText: praiseResult.praisedMessage };
     }
 
   } catch (error: any) {
@@ -221,7 +245,7 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
     const finalErrorMsg = `Sorry, I encountered an internal error while processing your request. Please try again later. (Details: ${errorMessage})`;
     addMessageToHistory('ai', finalErrorMsg); // Log error response to history
     conversationState.currentFlow = null; // Reset flow state on error
-    return finalErrorMsg;
+    return { responseText: finalErrorMsg };
   } finally {
        console.log("[handleUserMessage] Final state after processing:", conversationState);
   }
