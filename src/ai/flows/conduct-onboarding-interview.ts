@@ -30,6 +30,7 @@ const OnboardingDataSchema = z.object({
     name: z.string().describe("The user's name."),
     goal: z.string().describe("The user's goal for the 30-day trial."),
     channel: z.enum(['Chat', 'Email', 'Whatsapp']).describe("The user's preferred communication channel."),
+    hasStripe: z.boolean().optional().describe("Whether the user confirmed having a Stripe account."), // Added Stripe info
 }).describe('The collected onboarding information.');
 export type OnboardingData = z.infer<typeof OnboardingDataSchema>;
 
@@ -37,6 +38,8 @@ const ConductOnboardingInterviewOutputSchema = z.object({
   nextQuestion: z.string().optional().describe('The next question to ask the user. May contain [OPTIONS: ...] marker.'),
   isComplete: z.boolean().describe('Indicates if the interview is complete.'),
   onboardingData: OnboardingDataSchema.optional().describe('The final collected data when the interview is complete.'),
+  // Optional flag to indicate the last answer was about Stripe
+  answeredStripe: z.boolean().optional().describe('Flag indicating if the Stripe question was just answered.'),
 });
 export type ConductOnboardingInterviewOutput = z.infer<typeof ConductOnboardingInterviewOutputSchema>;
 
@@ -46,6 +49,8 @@ const QUESTIONS = {
     goal: "What is your goal for the 30 day free trial?",
     channel: "What is your preferred channel of communication?", // Base question text
     channelWithOptions: "What is your preferred channel of communication? [OPTIONS: Chat, Email, Whatsapp]", // Question with marker for buttons
+    stripe: "Do you have a Stripe account?", // Base question text
+    stripeWithOptions: "Do you have a Stripe account? [OPTIONS: Yes, No]", // Question with marker for buttons
 };
 
 /**
@@ -90,19 +95,29 @@ Analyze the history to determine which questions have been answered:
 1. Name: "${QUESTIONS.name}"
 2. Goal: "${QUESTIONS.goal}"
 3. Channel: "${QUESTIONS.channel}" (Must be one of Chat, Email, or Whatsapp)
+4. Stripe: "${QUESTIONS.stripe}" (Must be Yes or No)
 
 Based on the conversation history, determine the *very next* question to ask.
 
-If the user has not yet answered the 'name' question, ask: "${QUESTIONS.name}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it.
-If the user has answered 'name' but not 'goal', ask: "${QUESTIONS.goal}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it.
-If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channelWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. VERY IMPORTANT: Include the "[OPTIONS: Chat, Email, Whatsapp]" marker exactly as written in the question.
+If the user has not yet answered the 'name' question, ask: "${QUESTIONS.name}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false.
+If the user has answered 'name' but not 'goal', ask: "${QUESTIONS.goal}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false.
+If the user has answered 'name' and 'goal' but not 'channel', ask: "${QUESTIONS.channelWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false. VERY IMPORTANT: Include the "[OPTIONS: Chat, Email, Whatsapp]" marker exactly as written in the question.
+If the user has answered 'name', 'goal', and 'channel' but not 'stripe', ask: "${QUESTIONS.stripeWithOptions}". Set 'isComplete' to false. Set 'onboardingData' to null or omit it. Set 'answeredStripe' to false. VERY IMPORTANT: Include the "[OPTIONS: Yes, No]" marker exactly as written in the question.
 
-If the user has answered all three questions (based on their most recent relevant message for each topic):
-- Extract the name, goal, and channel (ensure channel is exactly 'Chat', 'Email', or 'Whatsapp' based on their response to the channel question).
+If the user just answered the 'stripe' question (their last message was 'Yes' or 'No' in response to the stripe question):
+- Extract the name, goal, channel, and stripe answer (true for 'Yes', false for 'No').
 - Set 'isComplete' to true.
 - Set 'nextQuestion' to null or omit it.
-- Populate the 'onboardingData' object with the extracted values.
+- Set 'answeredStripe' to true. // Signal that Stripe was the last question answered
+- Populate the 'onboardingData' object with the extracted values (name, goal, channel, hasStripe).
 - Do not ask any more questions.
+
+If the user has answered all questions *before* this turn (i.e., the history already contains answers to all 4), simply confirm completion:
+- Set 'isComplete' to true.
+- Set 'nextQuestion' to null or omit it.
+- Set 'answeredStripe' to false (as it wasn't answered *this* turn).
+- Extract name, goal, channel, and stripe answer from history.
+- Populate 'onboardingData' with the extracted values.
 
 Return ONLY a valid JSON object conforming to the output schema. Do not include any other text, explanation, or conversational elements outside the JSON structure.
 `,
@@ -133,12 +148,16 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
         // Validate output structure based on completion status
         if (output.isComplete) {
           console.log("[conductOnboardingInterviewFlow] Output indicates interview is complete. Validating data...");
-          if (!output.onboardingData || typeof output.onboardingData.name !== 'string' || typeof output.onboardingData.goal !== 'string' || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
+          if (!output.onboardingData || typeof output.onboardingData.name !== 'string' || typeof output.onboardingData.goal !== 'string' || !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel) || (output.answeredStripe && typeof output.onboardingData.hasStripe !== 'boolean')) {
+              // Added validation for hasStripe only if answeredStripe is true
             console.error("[conductOnboardingInterviewFlow] Error: Interview marked complete but onboardingData is invalid or missing. Output:", output);
             // Attempt to recover if possible, otherwise throw
              if (output.onboardingData && typeof output.onboardingData.channel === 'string' && !['Chat', 'Email', 'Whatsapp'].includes(output.onboardingData.channel)) {
                  console.warn("[conductOnboardingInterviewFlow] Warning: Invalid channel detected in completed data. Value:", output.onboardingData.channel);
                  // For now, throw error, but could add logic to re-ask the channel question
+             }
+             if (output.answeredStripe && output.onboardingData && typeof output.onboardingData.hasStripe !== 'boolean') {
+                 console.warn("[conductOnboardingInterviewFlow] Warning: Stripe answered but hasStripe is not boolean. Value:", output.onboardingData.hasStripe);
              }
             throw new Error("Interview marked complete but onboardingData is invalid or missing.");
           }
@@ -159,6 +178,8 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
               // Clear onboardingData if it shouldn't be there
               output.onboardingData = undefined;
           }
+           // Clear answeredStripe flag if interview is not complete
+           output.answeredStripe = false;
            console.log("[conductOnboardingInterviewFlow] Next question validated successfully:", output.nextQuestion);
         }
 
@@ -173,6 +194,3 @@ const conductOnboardingInterviewFlow = ai.defineFlow<
     }
   }
 );
-
-
-    

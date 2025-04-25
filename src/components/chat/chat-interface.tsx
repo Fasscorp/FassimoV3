@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, Plus, Clipboard, RefreshCw, MessageSquare, Mail, Phone } from "lucide-react"; // Added more icons
+import { Send, Plus, Clipboard, RefreshCw, MessageSquare, Mail, Phone, ListChecks, Check, X } from "lucide-react"; // Added ListChecks, Check, X
 import { handleUserMessage } from '@/actions/handle-user-message'; // Action to handle user message
 
 interface MessageAction {
@@ -27,6 +27,7 @@ interface Message {
 const ONBOARDING_TRIGGER = 'START_ONBOARDING_INTERVIEW';
 const CREATE_PRODUCT_TRIGGER = 'START_CREATE_PRODUCT';
 const RESET_CONVERSATION_TRIGGER = 'RESET_CONVERSATION';
+const VIEW_TASKLIST_TRIGGER = 'VIEW_TASKLIST'; // Add tasklist trigger
 
 // Initial message definition
 const initialMessage: Message = {
@@ -51,7 +52,9 @@ export function ChatInterface() {
     console.log("[resetChat] Resetting conversation...");
     setIsLoading(true);
     try {
-      const resetResponse = await handleUserMessage(RESET_CONVERSATION_TRIGGER, 'chat');
+      // Use the action to reset server-side state first
+      await handleUserMessage(RESET_CONVERSATION_TRIGGER, 'chat');
+      // Then reset client-side state
       setMessages([initialMessage]); // Reset to the initial greeting and options
       setInput("");
       setShowInput(false); // Hide input again
@@ -61,6 +64,14 @@ export function ChatInterface() {
     } finally {
         setIsLoading(false);
     }
+  };
+
+  // Function to view the task list
+  const viewTaskList = async () => {
+      console.log("[viewTaskList] Requesting task list...");
+      if (isLoading) return;
+      await processMessage(VIEW_TASKLIST_TRIGGER, "action"); // Use the processMessage flow
+      setShowInput(true); // Show input after displaying tasks
   };
 
 
@@ -97,7 +108,8 @@ export function ChatInterface() {
     await processMessage(trigger, "action"); // Pass trigger and 'action' type
 
     // Show the input field after the initial choice or if needed based on response
-     setShowInput(true);
+     // Keep input hidden if buttons are provided for the next step, otherwise show
+     // This logic is now handled within processMessage based on the response
   };
 
   // Central function to process messages (user input or action triggers)
@@ -119,15 +131,18 @@ export function ChatInterface() {
 
       // Determine if input should be shown based on whether the AI provided actions or completed a flow
       const lowerResponse = response.responseText.toLowerCase();
-      const isComplete = lowerResponse.includes("complete") || lowerResponse.includes("error") || lowerResponse.includes("sorry");
+      // Consider completion/error states OR if actions are present
+      const isCompleteOrError = lowerResponse.includes("complete") || lowerResponse.includes("error") || lowerResponse.includes("sorry") || content === VIEW_TASKLIST_TRIGGER;
       const hasActions = response.actions && response.actions.length > 0;
 
-      if (!isComplete && !hasActions) {
-         setShowInput(true); // Show input if flow is ongoing and no buttons are provided
-      } else if (hasActions) {
+      if (hasActions) {
          setShowInput(false); // Hide input if buttons are provided for the next step
+      } else if (isCompleteOrError && content !== VIEW_TASKLIST_TRIGGER) {
+         setShowInput(false); // Keep input hidden if flow completes or errors (unless viewing tasks)
+      } else {
+         setShowInput(true); // Show input if flow is ongoing and no buttons, or after viewing tasks
       }
-       // Keep input hidden if the flow completed or hit an error (unless explicitly shown above)
+
 
     } catch (error) {
       console.error("Error processing message:", error);
@@ -150,9 +165,11 @@ export function ChatInterface() {
 
   React.useEffect(() => {
     if (scrollAreaRef.current) {
-        const viewport = scrollAreaRef.current.querySelector('div[style*="overflow: hidden scroll;"]');
+        const viewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]'); // Use the specific attribute selector
         if (viewport) {
             viewport.scrollTop = viewport.scrollHeight;
+        } else {
+             console.warn("Scroll viewport not found for auto-scrolling.");
         }
     }
   }, [messages]);
@@ -176,9 +193,14 @@ export function ChatInterface() {
         <CardHeader className="border-b flex flex-row justify-between items-center">
            {/* Apply custom styling to the CardTitle */}
            <CardTitle className="text-[40px] font-bold tracking-tighter leading-[1.1] text-foreground">FASSIMO AI Assistant V3</CardTitle>
-          <Button variant="destructive" size="icon" onClick={resetChat} disabled={isLoading} aria-label="Reset chat">
-            <RefreshCw className="h-5 w-5" />
-          </Button>
+           <div className="flex gap-2"> {/* Group buttons */}
+               <Button variant="outline" size="icon" onClick={viewTaskList} disabled={isLoading} aria-label="View tasklist">
+                    <ListChecks className="h-5 w-5" />
+               </Button>
+               <Button variant="destructive" size="icon" onClick={resetChat} disabled={isLoading} aria-label="Reset chat">
+                    <RefreshCw className="h-5 w-5" />
+               </Button>
+           </div>
         </CardHeader>
         <CardContent className="p-0">
           <ScrollArea className="h-[500px] p-4" ref={scrollAreaRef}>
@@ -218,7 +240,13 @@ export function ChatInterface() {
                      {/* AI and System messages */}
                      {(message.sender === "ai" || message.sender === "system") && (
                          <div className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${message.sender === 'ai' ? 'bg-secondary text-secondary-foreground' : 'bg-muted text-muted-foreground'}`}>
-                              {message.text}
+                              {/* Use dangerouslySetInnerHTML for potential markdown formatting like ```json */}
+                              {/* Be cautious with user-generated content if not sanitized server-side */}
+                              {message.text.includes('\n') ? (
+                                  <pre className="whitespace-pre-wrap font-sans">{message.text}</pre>
+                              ) : (
+                                  message.text
+                              )}
                          </div>
                      )}
 
@@ -247,6 +275,8 @@ export function ChatInterface() {
                             {action.label === "Chat" && <MessageSquare className="mr-2 h-4 w-4" />}
                             {action.label === "Email" && <Mail className="mr-2 h-4 w-4" />}
                             {action.label === "Whatsapp" && <Phone className="mr-2 h-4 w-4" />} {/* Using Phone as proxy */}
+                            {action.label === "Yes" && <Check className="mr-2 h-4 w-4 text-green-500" />} {/* Added Yes Icon */}
+                            {action.label === "No" && <X className="mr-2 h-4 w-4 text-red-500" />} {/* Added No Icon */}
                             {action.label}
                          </Button>
                        ))}
@@ -291,4 +321,3 @@ export function ChatInterface() {
     </div>
   );
 }
-
