@@ -44,7 +44,8 @@ export function ChatInterface() {
   const [input, setInput] = React.useState("");
   const [messages, setMessages] = React.useState<Message[]>([initialMessage]);
   const [isLoading, setIsLoading] = React.useState(false);
-  const [showInput, setShowInput] = React.useState(false); // Initially hide input until a choice is made
+  // Initialize showInput based on the initial message having actions
+  const [showInput, setShowInput] = React.useState(!initialMessage.actions || initialMessage.actions.length === 0);
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
   // Function to reset the chat
@@ -57,10 +58,12 @@ export function ChatInterface() {
       // Then reset client-side state
       setMessages([initialMessage]); // Reset to the initial greeting and options
       setInput("");
-      setShowInput(false); // Hide input again
+      // Reset input visibility based on the initial message
+      setShowInput(!initialMessage.actions || initialMessage.actions.length === 0);
     } catch (error) {
        console.error("Error resetting chat:", error);
        setMessages(prev => [...prev, { id: 'reset-error', sender: 'system', text: 'Failed to reset the conversation. Please try again.'}]);
+       setShowInput(true); // Show input on error
     } finally {
         setIsLoading(false);
     }
@@ -71,7 +74,7 @@ export function ChatInterface() {
       console.log("[viewTaskList] Requesting task list...");
       if (isLoading) return;
       await processMessage(VIEW_TASKLIST_TRIGGER, "action"); // Use the processMessage flow
-      setShowInput(true); // Show input after displaying tasks
+      // processMessage will handle showing/hiding input based on tasklist response
   };
 
 
@@ -101,15 +104,14 @@ export function ChatInterface() {
 
     // Use the provided label or the trigger itself as the text for the history
     const actionText = label || trigger;
+    // Add action as a message to the history visually
     const userChoiceMessage: Message = { id: Date.now().toString(), sender: "action", text: actionText };
     setMessages((prev) => [...prev, userChoiceMessage]);
 
 
     await processMessage(trigger, "action"); // Pass trigger and 'action' type
 
-    // Show the input field after the initial choice or if needed based on response
-     // Keep input hidden if buttons are provided for the next step, otherwise show
-     // This logic is now handled within processMessage based on the response
+    // processMessage will handle showing/hiding input based on the response
   };
 
   // Central function to process messages (user input or action triggers)
@@ -131,16 +133,19 @@ export function ChatInterface() {
 
       // Determine if input should be shown based on whether the AI provided actions or completed a flow
       const lowerResponse = response.responseText.toLowerCase();
-      // Consider completion/error states OR if actions are present
-      const isCompleteOrError = lowerResponse.includes("complete") || lowerResponse.includes("error") || lowerResponse.includes("sorry") || content === VIEW_TASKLIST_TRIGGER;
+      // Completion states: includes "complete", "sorry", "error", or is the tasklist view trigger
+      const isEndOfFlow = lowerResponse.includes("complete!") || lowerResponse.includes("sorry,") || lowerResponse.includes("error") || content === VIEW_TASKLIST_TRIGGER;
       const hasActions = response.actions && response.actions.length > 0;
 
       if (hasActions) {
+         console.log("[processMessage] Response has actions, hiding input.");
          setShowInput(false); // Hide input if buttons are provided for the next step
-      } else if (isCompleteOrError && content !== VIEW_TASKLIST_TRIGGER) {
-         setShowInput(false); // Keep input hidden if flow completes or errors (unless viewing tasks)
+      } else if (isEndOfFlow) {
+         console.log("[processMessage] End of flow detected (completion, error, or task view), hiding input.");
+         setShowInput(false); // Keep input hidden if flow completes, errors, or tasklist shown
       } else {
-         setShowInput(true); // Show input if flow is ongoing and no buttons, or after viewing tasks
+         console.log("[processMessage] Flow ongoing without actions, showing input.");
+         setShowInput(true); // Show input if flow is ongoing and no buttons
       }
 
 
@@ -209,7 +214,9 @@ export function ChatInterface() {
                 <div key={message.id}>
                   <div
                     className={`flex items-start gap-3 ${
-                      message.sender === "user" ? "justify-end" : "justify-start"
+                      message.sender === "user" || message.sender === "action" // Align user and action to the right
+                        ? "justify-end"
+                        : "justify-start"
                     }`}
                   >
                     {(message.sender === "ai" || message.sender === "system") && (
@@ -218,30 +225,18 @@ export function ChatInterface() {
                         <AvatarFallback>AI</AvatarFallback>
                       </Avatar>
                     )}
-                     {/* Action messages styled like user input but aligned left */}
-                    {message.sender === "action" && (
-                      <>
-                         <Avatar className="h-8 w-8 invisible"> {/* Placeholder to maintain alignment */}
-                            <AvatarFallback>U</AvatarFallback>
-                          </Avatar>
-                          <div className="rounded-lg p-3 max-w-[75%] whitespace-pre-wrap bg-muted text-muted-foreground">
-                                {message.text}
-                          </div>
-                      </>
-                    )}
 
-                    {/* User messages */}
-                    {message.sender === "user" && (
-                         <div className="rounded-lg p-3 max-w-[75%] whitespace-pre-wrap bg-primary text-primary-foreground">
+                    {/* Common styling for message bubbles */}
+                    { (message.sender === "user" || message.sender === "action") && (
+                         <div className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${message.sender === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
                               {message.text}
                          </div>
-                    )}
+                     )}
 
                      {/* AI and System messages */}
                      {(message.sender === "ai" || message.sender === "system") && (
-                         <div className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${message.sender === 'ai' ? 'bg-secondary text-secondary-foreground' : 'bg-muted text-muted-foreground'}`}>
-                              {/* Use dangerouslySetInnerHTML for potential markdown formatting like ```json */}
-                              {/* Be cautious with user-generated content if not sanitized server-side */}
+                         <div className={`rounded-lg p-3 max-w-[75%] whitespace-pre-wrap ${message.sender === 'ai' ? 'bg-secondary text-secondary-foreground' : 'bg-muted text-muted-foreground italic'}`}>
+                              {/* Use <pre> for multiline text to preserve formatting */}
                               {message.text.includes('\n') ? (
                                   <pre className="whitespace-pre-wrap font-sans">{message.text}</pre>
                               ) : (
@@ -251,15 +246,15 @@ export function ChatInterface() {
                      )}
 
 
-                    {message.sender === "user" && (
+                    {(message.sender === "user" || message.sender === "action") && ( // Show avatar for user and action
                       <Avatar className="h-8 w-8">
                         <AvatarImage src="https://picsum.photos/32/32" alt="User Avatar" />
                         <AvatarFallback>U</AvatarFallback>
                       </Avatar>
                     )}
                   </div>
-                   {/* Render action buttons below the message */}
-                   {message.actions && (
+                   {/* Render action buttons below the AI/System message */}
+                   {(message.sender === "ai" || message.sender === "system") && message.actions && (
                      <div className="flex justify-start gap-2 mt-2 pl-11"> {/* Adjusted padding to align with AI message */}
                        {message.actions.map((action) => (
                          <Button
@@ -321,3 +316,4 @@ export function ChatInterface() {
     </div>
   );
 }
+

@@ -68,15 +68,21 @@ function addMessageToHistory(sender: OnboardingMessage['sender'], text: string) 
 
 /**
  * Creates an onboarding-related task using the addTask Genkit flow.
- * @param onboardingData The collected onboarding data.
+ * @param onboardingData The collected onboarding data. Should not be null/undefined.
  */
 async function createOnboardingTask(onboardingData: OnboardingData): Promise<void> {
     console.log("[createOnboardingTask] Function called with data:", onboardingData);
+
+    if (!onboardingData) {
+        console.error("[createOnboardingTask] Error: onboardingData is missing. Cannot create task.");
+        return;
+    }
+
     let taskDescription = '';
     let taskPriority: 'high' | 'medium' | 'low' = 'medium';
     let dueDate: string | undefined = undefined;
 
-    // Ensure hasStripe is explicitly checked (boolean)
+    // Ensure hasStripe is explicitly checked (boolean) after confirming onboardingData exists
     if (onboardingData.hasStripe === false) {
         taskDescription = 'Create a Stripe account for payment processing.';
         taskPriority = 'high';
@@ -311,6 +317,7 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
         if (onboardingResult.isComplete) {
           console.log("[handleUserMessage] Processing Onboarding COMPLETE state.");
 
+          // Check if onboardingData exists before accessing it
           if (onboardingResult.onboardingData) {
              console.log("[handleUserMessage] Onboarding data received:", onboardingResult.onboardingData);
 
@@ -321,6 +328,7 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
              if (onboardingResult.answeredStripe === true) {
                  console.log("[handleUserMessage] Onboarding result indicates Stripe question was processed by the flow. Calling createOnboardingTask...");
                  // Create task based on the final collected data (which includes the Stripe answer)
+                 // Ensure onboardingData exists before passing it
                  await createOnboardingTask(onboardingResult.onboardingData);
              } else {
                  console.log("[handleUserMessage] Onboarding complete, but answeredStripe flag is false or missing. No task created this turn.");
@@ -334,10 +342,10 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
              // Add task-related info to the final message if the Stripe question was just processed
              if (onboardingResult.answeredStripe === true) {
                   console.log("[handleUserMessage] Adding task info to final message based on answeredStripe=true.");
-                  // Use the final onboardingData to determine which task message to show
-                  if (onboardingData.hasStripe === false) {
+                  // Use the final onboardingData (confirmed to exist above) to determine which task message to show
+                  if (onboardingResult.onboardingData.hasStripe === false) {
                       finalMessage += "\n\nA task has been added to your list to create a Stripe account.";
-                  } else if (onboardingData.hasStripe === true) {
+                  } else if (onboardingResult.onboardingData.hasStripe === true) {
                       finalMessage += "\n\nA task has been added to your list to connect your Stripe account.";
                   } else {
                        // Should not happen if answeredStripe is true and validation passed, but log just in case
@@ -480,8 +488,11 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
 
   } catch (error: any) {
     console.error("[handleUserMessage] Error caught in top-level try-catch:", error);
-    const errorMessage = error?.message || 'Unknown error';
-    const finalErrorMsg = `Sorry, I encountered an internal error while processing your request. Please try again later. (Details: ${errorMessage})`;
+    // Check if the error object has a message property
+    const errorMessage = error?.message ?? 'Unknown error';
+    // Check if the error object has a name property to identify specific errors like ReferenceError
+    const errorName = error?.name ?? 'Error';
+    const finalErrorMsg = `Sorry, I encountered an internal error while processing your request. Please try again later. (Details: ${errorName === 'ReferenceError' ? error.message : errorMessage})`; // Provide more specific error message for ReferenceError
     addMessageToHistory('ai', finalErrorMsg); // Log error response to history
 
     console.log("[handleUserMessage] Resetting current flow state to null due to top-level error.");
@@ -511,3 +522,4 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
 // TODO: Implement actual sub-agent execution logic based on triage/intent when not testing praise agent.
 // TODO: Integrate ModelContextProtocol SDK for tool usage within sub-agents.
 // TODO: Implement actual channel integrations (Email, WhatsApp, Voice) - these would likely trigger this action.
+
