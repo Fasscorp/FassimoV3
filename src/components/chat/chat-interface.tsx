@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Send, Plus, Clipboard } from "lucide-react"; // Added Plus and Clipboard icons
+import { Send, Plus, Clipboard, RefreshCw } from "lucide-react"; // Added RefreshCw icon
 import { handleUserMessage } from '@/actions/handle-user-message'; // Action to handle user message
 
 interface Message {
@@ -17,32 +17,58 @@ interface Message {
   actions?: Array<{ label: string; trigger: string }>; // Optional actions (buttons)
 }
 
-// Define the specific trigger message for onboarding
+// Define the specific trigger messages
 const ONBOARDING_TRIGGER = 'START_ONBOARDING_INTERVIEW';
 const CREATE_PRODUCT_TRIGGER = 'START_CREATE_PRODUCT'; // Placeholder for future feature
+const RESET_CONVERSATION_TRIGGER = 'RESET_CONVERSATION'; // Trigger for resetting
+
+// Initial message definition
+const initialMessage: Message = {
+  id: "initial-greeting",
+  sender: "system",
+  text: "Hello! What would you like to work on today?",
+  actions: [
+    { label: "Onboarding", trigger: ONBOARDING_TRIGGER },
+    { label: "Create Product", trigger: CREATE_PRODUCT_TRIGGER },
+  ],
+};
 
 export function ChatInterface() {
   const [input, setInput] = React.useState("");
-  const [messages, setMessages] = React.useState<Message[]>([
-    // Initial system message with options
-    {
-      id: "initial-greeting",
-      sender: "system",
-      text: "Hello! What would you like to work on today?",
-      actions: [
-        { label: "Onboarding", trigger: ONBOARDING_TRIGGER },
-        { label: "Create Product", trigger: CREATE_PRODUCT_TRIGGER },
-      ],
-    },
-  ]);
+  const [messages, setMessages] = React.useState<Message[]>([initialMessage]);
   const [isLoading, setIsLoading] = React.useState(false);
   const [showInput, setShowInput] = React.useState(false); // Initially hide input until a choice is made
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
+  // Function to reset the chat
+  const resetChat = async () => {
+    console.log("[resetChat] Resetting conversation...");
+    setIsLoading(true); // Show loading indicator during reset
+    try {
+      // Call the server action with the reset trigger
+      const resetResponse = await handleUserMessage(RESET_CONVERSATION_TRIGGER, 'chat');
+      // Reset local state
+      setMessages([
+          // Optionally display the response from the reset action, or just the initial message
+          // { id: 'reset-confirm', sender: 'system', text: resetResponse },
+          initialMessage // Reset to the initial greeting and options
+      ]);
+      setInput("");
+      setShowInput(false); // Hide input again
+    } catch (error) {
+       console.error("Error resetting chat:", error);
+       // Keep existing messages but show an error toast/message if preferred
+       setMessages(prev => [...prev, { id: 'reset-error', sender: 'system', text: 'Failed to reset the conversation. Please try again.'}]);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+
   // Function to send a regular text message
   const sendMessage = async () => {
     const trimmedInput = input.trim();
-    if (!trimmedInput) return;
+    if (!trimmedInput || isLoading) return; // Prevent sending while loading or empty
 
     const userMessage: Message = { id: Date.now().toString(), sender: "user", text: trimmedInput };
     setMessages((prev) => [...prev, userMessage]);
@@ -53,6 +79,8 @@ export function ChatInterface() {
 
   // Function to handle button clicks (actions)
   const handleActionClick = async (trigger: string) => {
+     if (isLoading) return; // Prevent action clicks while loading
+
     // Find the message with the action to remove buttons after click
     const actionMessageIndex = messages.findIndex(msg => msg.actions?.some(a => a.trigger === trigger));
 
@@ -86,19 +114,21 @@ export function ChatInterface() {
     try {
       // Call the server action to handle the message/trigger
       // Use 'chat' channel for all interactions originating from the web UI
-      // No need to pass history here, the action handler manages it internally (server-side)
       const aiResponseText = await handleUserMessage(content, 'chat');
 
       // Add the AI's response message
       const aiMessage: Message = { id: (Date.now() + 1).toString(), sender: "ai", text: aiResponseText };
       setMessages((prev) => [...prev, aiMessage]);
 
-      // Check if the response indicates the need for further input (e.g., onboarding question)
-      // If yes, ensure the input field is shown.
-      // Simple check: if the AI response doesn't contain "complete" or "error" keywords, assume it needs more input.
-      // This is a heuristic and might need refinement based on actual AI responses.
-      if (!aiResponseText.toLowerCase().includes("complete") && !aiResponseText.toLowerCase().includes("error") && !aiResponseText.toLowerCase().includes("sorry")) {
+      // Check if the response suggests the flow is ongoing or requires more input
+      const lowerResponse = aiResponseText.toLowerCase();
+      const requiresMoreInput = !(lowerResponse.includes("complete") || lowerResponse.includes("error") || lowerResponse.includes("sorry") || lowerResponse.startsWith("onboarding complete!"));
+
+      if (requiresMoreInput) {
         setShowInput(true);
+      } else {
+        // Optionally hide input if the flow seems finished or hit an error state
+        // setShowInput(false); // Uncomment if you want to hide input on completion/error
       }
 
 
@@ -135,8 +165,11 @@ export function ChatInterface() {
   return (
     <div className="flex justify-center items-center min-h-screen bg-background p-4">
       <Card className="w-full max-w-2xl shadow-lg rounded-lg">
-        <CardHeader className="border-b">
+        <CardHeader className="border-b flex flex-row justify-between items-center"> {/* Use flexbox for alignment */}
           <CardTitle className="text-lg font-semibold text-foreground">FASSIMO v3.0</CardTitle>
+          <Button variant="ghost" size="icon" onClick={resetChat} disabled={isLoading} aria-label="Reset chat">
+            <RefreshCw className="h-5 w-5" />
+          </Button>
         </CardHeader>
         <CardContent className="p-0">
           <ScrollArea className="h-[500px] p-4" ref={scrollAreaRef}>
@@ -235,5 +268,3 @@ export function ChatInterface() {
     </div>
   );
 }
-
-    

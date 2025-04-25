@@ -20,6 +20,7 @@ const OnboardingDataSchema = z.object({
 // Define the specific trigger messages
 const ONBOARDING_TRIGGER = 'START_ONBOARDING_INTERVIEW';
 const CREATE_PRODUCT_TRIGGER = 'START_CREATE_PRODUCT'; // Placeholder for future feature
+const RESET_CONVERSATION_TRIGGER = 'RESET_CONVERSATION'; // Trigger for resetting
 
 // --- State Management (Simple Example - In-memory for this request) ---
 // In a real application, this state should be stored persistently (e.g., Firestore, session storage)
@@ -37,8 +38,20 @@ let conversationState: ConversationState = {
     history: [],
 };
 
+// Helper function to reset the state
+function resetConversationState() {
+    console.log("[resetConversationState] Resetting state.");
+    conversationState = {
+        currentFlow: null,
+        history: [],
+    };
+}
+
+
 // Helper function to add messages to the state
 function addMessageToHistory(sender: OnboardingMessage['sender'], text: string) {
+    // Prevent adding reset trigger to history
+    if (text === RESET_CONVERSATION_TRIGGER) return;
     const newMessage: OnboardingMessage = { sender, text };
     conversationState.history.push(newMessage);
     console.log("[addMessageToHistory] Updated history:", conversationState.history);
@@ -56,6 +69,14 @@ function addMessageToHistory(sender: OnboardingMessage['sender'], text: string) 
 export async function handleUserMessage(message: string, channel: 'email' | 'whatsapp' | 'voice' | 'chat'): Promise<string> {
   console.log(`[handleUserMessage] Handling message from ${channel}: "${message}"`);
   console.log("[handleUserMessage] Current state before processing:", conversationState);
+
+  // --- Reset Flow ---
+  if (message === RESET_CONVERSATION_TRIGGER) {
+    console.log("[handleUserMessage] Received reset trigger.");
+    resetConversationState();
+    // Optionally return a confirmation message, or let the UI handle resetting the display
+    return "Conversation reset.";
+  }
 
 
   // Determine the message sender type based on whether it's a trigger
@@ -75,8 +96,10 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
       if (message === ONBOARDING_TRIGGER) {
         console.log("[handleUserMessage] Triggering onboarding interview...");
         conversationState.currentFlow = 'onboarding';
-        // Clear history specific to onboarding if restarting
-        // conversationState.history = []; // Decide if history should reset on explicit trigger
+        // Ensure history is clean for a new onboarding session triggered explicitly
+        // Note: history might contain the 'START_ONBOARDING_INTERVIEW' action message if added above,
+        // which is fine for the LLM context. Resetting here would remove that context.
+        // conversationState.history = []; // Reconsider if a full reset is needed here
       } else {
           console.log("[handleUserMessage] Continuing onboarding interview...");
       }
@@ -143,17 +166,21 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
     } else {
         // If no specific flow is active, default to parsing and potentially praise
         console.log("[handleUserMessage] No active flow, proceeding with default handling.");
-        conversationState.currentFlow = 'praise'; // Set state for clarity
+        // Keep track that we're in a general interaction, could be praise or something else
+        // conversationState.currentFlow = 'praise'; // Setting this might be too specific if it's not always praise
 
         // 1. Communication Agent (Initial Parsing) -> Executive Agent (Simplified)
         console.log("[handleUserMessage] Step 1: Calling parseUserMessage...");
-        const parsedMessage = await parseUserMessage({ message, channel }); // Assuming parse doesn't need full history for now
+        // Parse needs only the current message and channel
+        const parsedMessage = await parseUserMessage({ message, channel });
         console.log("[handleUserMessage] Step 1: parseUserMessage successful. Result:", parsedMessage);
-        // We might add parsedMessage details to history if needed later
+        // Potentially add parsed info to history if useful for future context
+        // addMessageToHistory('system', `Parsed Intent: ${parsedMessage.intent}`);
 
         // 2. Executive Agent (Triage - Simplified)
         console.log("[handleUserMessage] Step 2: Calling triageUserMessage...");
-        const triageResult = await triageUserMessage({ message, channel }); // Assuming triage doesn't need full history
+        // Triage also likely only needs current message and channel
+        const triageResult = await triageUserMessage({ message, channel });
         console.log("[handleUserMessage] Step 2: triageUserMessage successful. Result:", triageResult);
 
         // If marked as spam, respond appropriately and exit.
@@ -161,13 +188,14 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
             console.log("[handleUserMessage] Message identified as spam.");
             const spamResponse = "This message appears to be spam and has been discarded.";
             addMessageToHistory('ai', spamResponse);
-            conversationState.currentFlow = null; // Reset flow
+            // conversationState.currentFlow = null; // Ensure flow state is cleared
             return spamResponse;
         }
 
-        // 3. Executive Agent (Direct Delegation to Praise Agent for testing)
-        console.log("[handleUserMessage] Step 3: Calling praiseAgent...");
-        // Praise agent likely only needs the current message, not full history
+        // 3. Executive Agent (Direct Delegation to Praise Agent FOR TESTING)
+        // For the test requirement: Always delegate to praise agent if not onboarding/create product
+        console.log("[handleUserMessage] Step 3: Delegating to praiseAgent (testing)...");
+        // Praise agent only needs the current message
         const praiseResult = await praiseAgent({ message: message });
         console.log("[handleUserMessage] Step 3: praiseAgent successful. Result:", praiseResult);
 
@@ -176,14 +204,14 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
             console.error("[handleUserMessage] Error: Praise Agent did not return a valid praised message. Result:", praiseResult);
             const errorResponse = "Sorry, the Praise Agent couldn't process the message correctly.";
              addMessageToHistory('ai', errorResponse);
-             conversationState.currentFlow = null; // Reset flow
+             // conversationState.currentFlow = null; // Reset flow
              return errorResponse;
         }
 
         // 4. Return Praise Agent's Response
         console.log("[handleUserMessage] Step 4: Returning praised message to user:", praiseResult.praisedMessage);
         addMessageToHistory('ai', praiseResult.praisedMessage);
-        conversationState.currentFlow = null; // Reset flow
+        // conversationState.currentFlow = null; // Reset flow
         return praiseResult.praisedMessage;
     }
 
@@ -200,8 +228,6 @@ export async function handleUserMessage(message: string, channel: 'email' | 'wha
 }
 
 // TODO: Replace in-memory state with a persistent solution (Firestore, session storage, etc.)
-// TODO: Implement actual sub-agent execution logic (`executeSubAgentTask`) when needed for other flows.
+// TODO: Implement actual sub-agent execution logic based on triage/intent when not testing praise agent.
 // TODO: Integrate ModelContextProtocol SDK for tool usage within sub-agents.
 // TODO: Implement actual channel integrations (Email, WhatsApp, Voice) - these would likely trigger this action.
-
-    
